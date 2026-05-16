@@ -1,0 +1,42 @@
+patient_id,full_name,cpf,email,phone,gender,blood_type,birth_date,city,state,created_at
+1,Yago Alves,765.324.801-26,ana-julia14@example.org,+55 (081) 1867 7804,F,B+,2009-11-14,Brito de Teixeira,RN,2024-12-24 15:44:11
+2,Zoe da Conceição,205.367.418-08,maria-juliacavalcanti@example.com,(031) 7541-5077,M,B-,2023-02-07,Rodrigues,PR,
+3,Lavínia Pinto,304.295.681-42,ester82@example.net,+55 (021) 1472 6665,M,A+,2014-06-13,Vieira de Minas,ES,2026-02-04 20:17:24
+4,Carlos Eduardo Campos,457.961.820-30,costaaugusto@example.net,+55 21 5550-2899,F,B+,1972-09-11,Moraes dos Dourados,DF,2024-08-18 05:01:32
+5,Catarina Souza,065.934.182-42,abreuisabella@example.org,+55 (061) 8012-9366,M,AB+,2008-07-01,,CE,2025-06-12 05:49:16
+6,Dr. Thomas Borges,513.892.640-33,miguel65@example.org,+55 (021) 8405-9171,F,AB-,1931-12-12,Dias dos Dourados,RR,2024-12-16 19:53:24
+7,Fernando Costa,764.521.809-67,caue87@example.net,+55 (051) 5911-7916,F,A+,1976-03-11,Alves,PA,2024-05-27 23:02:59
+8,Isabel das Neves,830.571.269-95,dpastor@example.net,+55 (061) 8443-8414,F,,1937-02-25,Aparecida,MG,2026-03-19 11:05:30
+9,Thiago Martins,820.347.195-14,da-mataamanda@example.org,+55 61 8525 2293,F,B+,1981-09-10,Costa,AC,2026-01-30 11:04:14
+10,Raquel Casa Grande,680.137.294-78,wfarias@example.net,(031) 9758 9571,M,A-,1995-07-13,Andrade,TO,2025-11-14 11:12:49
+11,Ayla Novaes,315.670.294-34,osa@example.net,(021) 2612-7752,M,O-,1930-01-27,Santos,PA,2024-12-26 16:19:57
+12,Bruna Costa,451.237.609-70,luiz-otavio28@example.net,0800-521-1662,F,O-,2018-10-01,Leão,MG,2025-06-19 13:27:49
+13,Antonella Correia,185.342.706-35,anna-liz60@example.com,+55 11 2234 9035,M,B-,2002-08-28,Costa do Galho,PR,2024-11-25 13:59:44
+14,Lunna das Neves,124.908.376-13,maria-eduardapinto@example.org,(011) 2579 0968,F,AB+,1989-08-09,Nunes,PB,2025-12-07 21:16:46
+15,Maria Laura Pires,096.285.147-76,costeladiogo@example.net,21 8237 8918,F,B-,2021-03-15,Mendonça de Fogaça,BA,2025-02-25 01:10:39
+16,Lorenzo Rocha,843.620.579-00,biancasantos@example.com,0500-799-9333,F,A-,1948-09-07,Montenegro dos Dourados,AP,2025-11-21 19:04:10
+17,Pietro Silva,718.302.654-07,joao-pedrocosta@example.com,+55 41 8306 2375,F,AB+,1988-12-25,Silveira Grande,RS,2024-08-12 04:44:46
+18,Henry Camargo,293.087.415-50,barbarafreitas@example.org,(041) 6129 4773,M,O-,1979-06-15,Gomes Paulista,PI,2026-04-14 14:35:29
+19,Manuela Cirino,209.851.643-60,camaramariana@example.com,,M,A+,1978-03-27,Viana,PR,2025-02-07 06:06:20
+20,Asafe Pires,582.740.613-90,augusto42@example.org,84 3273-2577,F,AB+,1979-08-02,Vieira do Campo,AC,2026-01-04 02:21:05
+21,Aylla Sales,503.249.687-10,yrocha@example.org,81 8507-3689,M,A+,2025-11-30,Pimenta,RS,2025-05-04 21:52:37
+22,Kamilly Costa,042.879.563-38,isabella86@example.org,+55 (031) 9288-3792,F,A-,2001-09-10,Porto de Fernandes,GO,2025-01-08 13:57:19
+23,Luiz Felipe Garcia,437.810.652-35,ocassiano@example.org,+55 21 3990-9255,F,,2001-02-18,Alves,DF,2024-06-04 08:41:35
+24,Francisco Abreu,248.957.361-64,noah87@example.com,0900 361 6095,M,AB+,,Farias de Pacheco,AP,2025-12-29 05:48:49
+25,Luna Guerra,712.459.863-09,gjesus@example.com,0800-086-2069,M,B+,1938-09-24,Carvalho,DF,2025-06-30 09:59:23
+26,Sra. Ana Julia Campos,095.438.617-57,pedroalmeida@example.com,0800 702 4252,F,A-,1984-02-03,Rocha Alegre,RJ,2026-01-28 06:52:47
+27,Pedro Lucas Jesus,743.950.862-92,correiaenzo@example.org,+55 11 4893-6297,F,A-,1984-10-30,Santos do Amparo,GO,2025-04-14 21:00:27
+28,Dr. Miguel Mendes,613.285.479-73,gomesmanuella@example.com,0300-548-2780,M,AB+,1994-07-06,,PI,2025-08-18 01:42:35
+29,Ana Lívia da Mota,918.602.754-94,da-conceicaomelina@example.org,0300-157-9679,M,,1939-08-12,Freitas,TO,2025-05-21 00:14:54
+30,Rafael Azevedo,931.062.457-43,ravy02@example.com,+55 (031) 0821 1581,F,B+,1953-07-07,Vargas do Campo,RS,2025-12-09 05:34:52
+31,Yago Farias,921.634.870-40,yaraujo@example.com,+55 (011) 8877 4883,M,A+,1951-01-27,Fogaça,PI,2025-05-20 08:35:14
+32,Rafael Casa Grande,635.980.417-48,piresbeatriz@example.net,11 6511 5662,M,O+,1935-10-01,da Conceição de Sá,DF,2026-04-07 05:37:42
+33,Arthur Gabriel Souza,507.894.321-88,renan89@example.net,84 3036-7855,M,AB+,1937-08-28,Albuquerque,ES,2025-05-22 07:12:44
+34,João Lucas Garcia,067.943.281-78,nramos@example.net,+55 31 3910-2793,,O-,1950-07-23,Vasconcelos,PA,2025-06-10 02:04:56
+35,Nicolas Casa Grande,061.825.793-40,diasgael-henrique@example.org,0500-575-7692,M,A+,2026-04-20,da Luz do Campo,MS,2025-12-09 15:08:54
+36,Ana Sophia Aragão,,costastephany@example.com,(071) 9350-9432,F,AB+,1979-03-06,Souza,PI,2024-06-05 15:24:00
+37,Carlos Eduardo da Rosa,450.682.931-05,rafael24@example.com,0800-733-2119,F,O+,,Dias,PA,
+38,Sofia Casa Grande,402.153.968-98,sophiecavalcante@example.net,+55 31 8475-5120,M,A-,1926-09-28,Camargo de Costa,MA,2025-06-24 04:26:38
+39,Isabela Ferreira,097.218.536-40,lcassiano@example.org,41 7833-7370,M,O+,1999-07-15,Vasconcelos,RJ,2024-07-31 06:09:16
+40,Cauã Pereira,893.165.024-89,pedro-miguel72@example.org,+55 21 5599-9276,F,A-,1947-03-10,Borges de Sousa,RJ,2025-10-23 09:24:47
+2,Zoe da Conceição,205.367.418-08,maria-juliacavalcanti@example.com,(031) 7541-5077,M,B-,2023-02-07,Rodrigues,PR,

@@ -1,0 +1,42 @@
+hospital_id,hospital_name,hospital_type,state,city,capacity,created_at
+1,Hospital Siqueira,Private,RR,Nascimento da Serra,654.0,2025-01-22 19:18:30
+2,Hospital Borges Vasconcelos - EI,University,MS,Andrade de Marques,956.0,2026-03-04 15:03:01
+3,Hospital Abreu,Emergency,DF,Pinto,396.0,2025-09-20 20:44:09
+4,Hospital Dias,University,DF,Sá de Araújo,873.0,2025-04-15 17:22:50
+5,Hospital da Luz,Private,AM,Mendes dos Dourados,829.0,2026-02-25 03:01:39
+6,Hospital Pimenta Ltda.,University,BA,Barros do Norte,426.0,2024-08-23 04:21:03
+7,Hospital Gomes Ramos Ltda.,University,MS,Teixeira,585.0,2024-07-13 18:26:26
+8,Hospital Oliveira S.A.,University,SP,Rios,173.0,2025-01-04 02:58:53
+9,Hospital Albuquerque,University,AM,Leão,,2025-05-10 07:47:33
+10,Hospital Campos Garcia - ME,Public,MG,Martins de Caldeira,848.0,2025-11-29 09:40:35
+11,,,MG,Porto,632.0,2026-02-07 07:10:59
+12,Hospital Mendes Farias S.A.,University,SC,Peixoto,602.0,2026-03-03 03:06:41
+13,Hospital Rocha Câmara - ME,Public,TO,Duarte,799.0,2025-05-28 04:20:07
+14,Hospital Nascimento,Emergency,MA,Gomes da Mata,592.0,2025-11-19 20:28:14
+15,Hospital Garcia Aragão Ltda.,Specialized,PE,Fernandes,535.0,2025-03-18 00:39:22
+16,Hospital Montenegro - EI,Emergency,PA,Caldeira de Goiás,275.0,2025-12-11 17:45:00
+17,Hospital Nogueira S.A.,Emergency,AM,da Costa,221.0,2024-10-06 19:24:06
+18,Hospital Abreu,,PA,Costela Paulista,656.0,2025-08-03 13:52:07
+19,,Specialized,RO,Andrade,373.0,
+20,Hospital Silveira S/A,Private,GO,Vieira de Correia,97.0,2024-12-27 05:39:08
+21,Hospital Sousa,Specialized,MT,Novaes de Pereira,323.0,2026-05-06 05:15:09
+22,Hospital Mendes Ltda.,Specialized,ES,Araújo,656.0,2026-04-18 15:29:55
+23,Hospital Fonseca,Public,PR,,785.0,2025-11-26 07:06:10
+24,Hospital Brito Macedo S.A.,University,RJ,Nunes Alegre,454.0,2025-05-22 12:43:16
+25,Hospital Cassiano,Public,PI,Vargas do Campo,528.0,2026-02-09 09:38:24
+26,Hospital Pires Fernandes S/A,Specialized,PB,Farias do Galho,669.0,2024-06-24 04:25:22
+27,Hospital Mendonça - EI,Private,RR,Cassiano da Mata,677.0,2025-07-13 01:22:44
+28,Hospital Cassiano S.A.,Specialized,MG,Sales,380.0,2025-05-16 12:08:06
+29,Hospital Santos - EI,Public,,Mendonça,933.0,2025-12-02 04:35:01
+30,Hospital Cassiano e Filhos,University,SE,Alves da Mata,933.0,2026-03-25 12:44:37
+31,Hospital Cirino,University,SC,Montenegro do Norte,604.0,2024-12-09 00:42:41
+32,Hospital Melo,Public,MS,Barbosa das Pedras,277.0,2025-04-15 06:38:54
+33,Hospital Moreira,University,PI,Montenegro,918.0,2026-03-26 12:32:08
+34,Hospital Brito,University,ES,Vieira,563.0,2024-12-11 19:25:26
+35,Hospital Rios Moura - ME,Private,RS,Moraes,240.0,2024-06-04 08:18:13
+36,Hospital Sales Nogueira S.A.,Private,AP,,995.0,2024-07-14 15:12:01
+37,Hospital da Paz e Filhos,Emergency,SE,Almeida das Flores,148.0,2024-07-28 10:08:58
+38,Hospital Pinto,Public,MG,Pinto de Garcia,102.0,2025-12-16 20:54:10
+39,Hospital Caldeira,Specialized,RN,Souza do Oeste,399.0,2025-02-28 14:51:01
+40,Hospital da Cunha Ltda.,University,RS,,312.0,2024-10-23 19:33:30
+30,Hospital Cassiano e Filhos,University,SE,Alves da Mata,933.0,2026-03-25 12:44:37

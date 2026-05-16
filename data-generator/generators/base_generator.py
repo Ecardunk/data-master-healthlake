@@ -9,7 +9,7 @@ class BaseGenerator:
 
     def __init__(
         self,
-        null_percentage=0.05,
+        null_percentage=0.03,
         duplicate_percentage=0.03
     ):
 

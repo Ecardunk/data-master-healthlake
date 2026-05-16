@@ -1,0 +1,42 @@
+doctor_id,doctor_name,crm,specialty,hospital_id,created_at
+1,Gael Henrique Pacheco,24572.0,Emergency,30,2024-12-12 00:56:06
+2,Maya Borges,50958.0,Pulmonology,13,2025-11-11 12:29:05
+3,Srta. Natália Pacheco,83205.0,Orthopedics,19,2025-02-25 07:05:28
+4,Daniela Oliveira,27346.0,Cardiology,16,2024-05-25 06:19:58
+5,Dra. Caroline Silva,20056.0,Orthopedics,2,2024-08-29 04:24:51
+6,Luiz Miguel Correia,34365.0,Pulmonology,12,2025-04-11 05:33:55
+7,Benicio da Conceição,53383.0,Pediatrics,23,2026-04-24 22:11:50
+8,Levi da Paz,50357.0,Pulmonology,22,2025-09-08 18:26:11
+9,Maitê Cavalcante,45147.0,Neurology,33,2024-12-09 17:33:36
+10,Sr. Anthony Araújo,20750.0,Pulmonology,23,2025-07-05 19:53:54
+11,Rodrigo Macedo,16456.0,Neurology,5,2024-08-13 10:17:13
+12,Bella Santos,99523.0,Neurology,20,2025-04-03 19:01:34
+13,Isaac Almeida,75510.0,Neurology,24,2024-10-03 23:45:05
+14,Eduarda Lima,20842.0,Neurology,8,2025-11-23 22:51:35
+15,Srta. Aurora Novaes,96747.0,Pediatrics,1,2025-09-04 06:05:11
+16,Stephany Andrade,32260.0,Pulmonology,29,2026-02-18 16:54:29
+17,João Vargas,79597.0,Pulmonology,32,2025-05-19 03:13:03
+18,Bernardo Rodrigues,46862.0,,39,2026-03-10 22:58:26
+19,Gustavo Henrique Souza,42442.0,Cardiology,1,2026-04-28 12:19:38
+20,Joaquim Leão,92294.0,Orthopedics,26,2025-12-25 19:50:18
+21,Cauã Macedo,97929.0,Neurology,27,2025-10-12 08:57:36
+22,Lucas Gabriel Silveira,61643.0,Orthopedics,28,2025-05-19 21:59:04
+23,Beatriz Albuquerque,87543.0,Pulmonology,11,2026-04-15 09:14:54
+24,Maria Vitória Sá,93098.0,Neurology,14,2024-08-28 14:04:08
+25,Asafe Caldeira,94875.0,Emergency,19,2024-11-07 14:53:27
+26,Dr. Benicio Vargas,14803.0,Orthopedics,3,2026-03-08 10:47:51
+27,Bárbara Lopes,68243.0,Orthopedics,31,2025-04-08 06:25:15
+28,Stephany das Neves,88944.0,Pediatrics,11,2025-10-06 20:12:57
+29,Sr. Bernardo Costela,37025.0,Emergency,14,2026-01-07 18:13:05
+30,Anthony Brito,85086.0,Pulmonology,17,2025-06-14 06:33:19
+31,João Felipe Fernandes,77733.0,Cardiology,30,2024-06-20 09:47:31
+32,João Vitor Albuquerque,45516.0,Pediatrics,18,2024-06-17 04:32:32
+33,Sr. Pedro Henrique Rodrigues,89680.0,Orthopedics,33,2026-04-09 15:11:10
+34,Lunna Garcia,79018.0,Neurology,18,2024-08-22 19:50:08
+35,,66483.0,Pediatrics,28,2024-10-19 05:25:39
+36,Catarina Almeida,97088.0,Neurology,34,2025-04-29 13:10:52
+37,Luna Fogaça,98949.0,Orthopedics,9,2026-02-13 00:36:56
+38,Maria Helena Azevedo,27957.0,Pediatrics,13,2025-01-19 07:54:29
+39,Bella Casa Grande,48313.0,Neurology,38,2026-03-13 02:52:02
+40,Valentina Pacheco,28930.0,Neurology,7,2025-08-12 19:54:00
+6,Luiz Miguel Correia,34365.0,Pulmonology,12,2025-04-11 05:33:55
