@@ -1,4 +1,4 @@
-OUTPUT_DIR_BRONZE = "./output/bronze"
+OUTPUT_DIR_RAW = "./output/RAW"
 #OUTPUT_DIR_STREAMING = "./output/streaming"
 
 NULL_PERCENTAGE = 0.05

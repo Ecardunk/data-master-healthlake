@@ -16,8 +16,7 @@ from generators.attendance_generator import AttendanceGenerator
 # =========================================================
 
 ensure_directories([
-    OUTPUT_DIR_BRONZE,
-    OUTPUT_DIR_STREAMING
+    OUTPUT_DIR_RAW
 ])
 
 # =========================================================
@@ -65,27 +64,27 @@ attendance_df = AttendanceGenerator().generate(
 # =========================================================
 
 hospital_df.to_csv(
-    f"{OUTPUT_DIR_BRONZE}/hospitals.csv",
+    f"{OUTPUT_DIR_RAW}/hospitals.csv",
     index=False
 )
 
 patient_df.to_csv(
-    f"{OUTPUT_DIR_BRONZE}/patients.csv",
+    f"{OUTPUT_DIR_RAW}/patients.csv",
     index=False
 )
 
 doctor_df.to_csv(
-    f"{OUTPUT_DIR_BRONZE}/doctors.csv",
+    f"{OUTPUT_DIR_RAW}/doctors.csv",
     index=False
 )
 
 disease_df.to_csv(
-    f"{OUTPUT_DIR_BRONZE}/diseases.csv",
+    f"{OUTPUT_DIR_RAW}/diseases.csv",
     index=False
 )
 
 attendance_df.to_csv(
-    f"{OUTPUT_DIR_BRONZE}/attendance.csv",
+    f"{OUTPUT_DIR_RAW}/attendance.csv",
     index=False
 )
 
