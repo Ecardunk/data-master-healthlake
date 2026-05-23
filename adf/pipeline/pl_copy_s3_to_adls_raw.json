@@ -104,7 +104,7 @@
                       },
                       {
                         "name": "sink",
-                        "value": "abfss://raw/<storage-account>/@{item()}/odate=@{pipeline().parameters.odate}/@{item()}.csv"
+                        "value": "abfss://raw@sthealthdatalake001.dfs.core.windows.net/@{item()}/odate=@{pipeline().parameters.odate}/@{item()}.csv"
                       }
                     ],
                     "typeProperties": {
