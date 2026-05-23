@@ -1,0 +1,129 @@
+{
+	"name": "S3toADLS",
+	"properties": {
+		"activities": [
+			{
+				"name": "ForEach",
+				"type": "ForEach",
+				"dependsOn": [],
+				"userProperties": [],
+				"typeProperties": {
+					"items": {
+						"value": "@pipeline().parameters.folder_file_array",
+						"type": "Expression"
+					},
+					"activities": [
+						{
+							"name": "S3toADLS",
+							"type": "Copy",
+							"dependsOn": [],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"source": {
+									"type": "DelimitedTextSource",
+									"storeSettings": {
+										"type": "AmazonS3ReadSettings",
+										"recursive": true,
+										"enablePartitionDiscovery": false
+									},
+									"formatSettings": {
+										"type": "DelimitedTextReadSettings"
+									}
+								},
+								"sink": {
+									"type": "DelimitedTextSink",
+									"storeSettings": {
+										"type": "AzureBlobFSWriteSettings"
+									},
+									"formatSettings": {
+										"type": "DelimitedTextWriteSettings",
+										"quoteAllText": true,
+										"fileExtension": ".csv"
+									}
+								},
+								"enableStaging": false,
+								"translator": {
+									"type": "TabularTranslator",
+									"typeConversion": true,
+									"typeConversionSettings": {
+										"allowDataTruncation": true,
+										"treatBooleanAsNumber": false
+									}
+								}
+							},
+							"inputs": [
+								{
+									"referenceName": "ds_s3_csv",
+									"type": "DatasetReference",
+									"parameters": {
+										"file_name": {
+											"value": "@item().file",
+											"type": "Expression"
+										},
+										"folderPath": {
+											"value": "@item().folder",
+											"type": "Expression"
+										},
+										"today": {
+											"value": "@formatDateTime(\n    convertTimeZone(\n        utcNow(),\n        'UTC',\n        'E. South America Standard Time'\n    ),\n    'yyyyMMdd'\n)",
+											"type": "Expression"
+										}
+									}
+								}
+							],
+							"outputs": [
+								{
+									"referenceName": "ds_adls_csv",
+									"type": "DatasetReference",
+									"parameters": {
+										"folder_name": {
+											"value": "@item().file",
+											"type": "Expression"
+										}
+									}
+								}
+							]
+						}
+					]
+				}
+			}
+		],
+		"parameters": {
+			"folder_file_array": {
+				"type": "array",
+				"defaultValue": [
+					{
+						"folder": "raw/attendance",
+						"file": "attendance"
+					},
+					{
+						"folder": "raw/diseases",
+						"file": "diseases"
+					},
+					{
+						"folder": "raw/doctors",
+						"file": "doctors"
+					},
+					{
+						"folder": "raw/hospitals",
+						"file": "hospitals"
+					},
+					{
+						"folder": "raw/patients",
+						"file": "patients"
+					}
+				]
+			}
+		},
+		"annotations": [],
+		"lastPublishTime": "2026-05-19T02:10:03Z"
+	},
+	"type": "Microsoft.DataFactory/factories/pipelines"
+}

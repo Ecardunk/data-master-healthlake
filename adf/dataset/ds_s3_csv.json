@@ -1,0 +1,42 @@
+{
+	"name": "ds_s3_csv",
+	"properties": {
+		"linkedServiceName": {
+			"referenceName": "ls_s3_healthlake",
+			"type": "LinkedServiceReference"
+		},
+		"parameters": {
+			"file_name": {
+				"type": "string"
+			},
+			"folderPath": {
+				"type": "string"
+			},
+			"today": {
+				"type": "string"
+			}
+		},
+		"annotations": [],
+		"type": "DelimitedText",
+		"typeProperties": {
+			"location": {
+				"type": "AmazonS3Location",
+				"bucketName": "s3-data-master-bucket",
+				"folderPath": {
+					"value": "@dataset().folderPath",
+					"type": "Expression"
+				},
+				"fileName": {
+					"value": "@concat(dataset().file_name, '_', dataset().today, '.csv')",
+					"type": "Expression"
+				}
+			},
+			"columnDelimiter": ",",
+			"escapeChar": "\\",
+			"firstRowAsHeader": true,
+			"quoteChar": "\""
+		},
+		"schema": []
+	},
+	"type": "Microsoft.DataFactory/factories/datasets"
+}
