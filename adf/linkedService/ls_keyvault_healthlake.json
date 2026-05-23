@@ -1,10 +1,10 @@
 {
-  "name": "ls_keyvault_healthlake",
-  "properties": {
-    "annotations": [],
-    "type": "AzureKeyVault",
-    "typeProperties": {
-      "baseUrl": "https://kv-data-master-case.vault.azure.net/"
-    }
-  }
+	"name": "ls_keyvault_healthlake",
+	"properties": {
+		"annotations": [],
+		"type": "AzureKeyVault",
+		"typeProperties": {
+			"baseUrl": "https://kv-data-master-case.vault.azure.net/"
+		}
+	}
 }
