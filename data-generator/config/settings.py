@@ -5,11 +5,11 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 OUTPUT_DIR_RAW = BASE_DIR / "output" / "raw"
 METADATA_FILE = BASE_DIR / "metadata" / "id_control.json"
 
-N_PATIENTS = 50000
-N_HOSPITALS = 50
-N_DOCTORS = 600
-N_DISEASES = 30
-N_ATTENDANCE = 200000
+N_PATIENTS = 5000
+N_HOSPITALS = 5
+N_DOCTORS = 12
+N_DISEASES = 2
+N_ATTENDANCE = 1000
 
 RECORD_COUNTS = {
     "patients": N_PATIENTS,

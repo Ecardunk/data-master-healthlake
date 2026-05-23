@@ -1,0 +1,214 @@
+{
+  "name": "pl_copy_s3_to_adls_raw",
+  "properties": {
+    "description": "Manual batch ingestion from S3 raw landing to ADLS Gen2 raw container, partitioned by odate.",
+    "activities": [
+      {
+        "name": "ForEachDataset",
+        "type": "ForEach",
+        "dependsOn": [],
+        "userProperties": [],
+        "typeProperties": {
+          "items": {
+            "value": "@pipeline().parameters.dataset_names",
+            "type": "Expression"
+          },
+          "isSequential": false,
+          "batchCount": 5,
+          "activities": [
+            {
+              "name": "CheckS3FileExists",
+              "type": "GetMetadata",
+              "dependsOn": [],
+              "policy": {
+                "timeout": "0.12:00:00",
+                "retry": 1,
+                "retryIntervalInSeconds": 30,
+                "secureOutput": false,
+                "secureInput": false
+              },
+              "userProperties": [
+                {
+                  "name": "dataset",
+                  "value": "@{item()}"
+                },
+                {
+                  "name": "odate",
+                  "value": "@{pipeline().parameters.odate}"
+                }
+              ],
+              "typeProperties": {
+                "dataset": {
+                  "referenceName": "ds_s3_raw_file_binary",
+                  "type": "DatasetReference",
+                  "parameters": {
+                    "bucketName": {
+                      "value": "@pipeline().parameters.s3_bucket_name",
+                      "type": "Expression"
+                    },
+                    "datasetName": {
+                      "value": "@item()",
+                      "type": "Expression"
+                    },
+                    "odate": {
+                      "value": "@pipeline().parameters.odate",
+                      "type": "Expression"
+                    }
+                  }
+                },
+                "fieldList": [
+                  "exists"
+                ],
+                "storeSettings": {
+                  "type": "AmazonS3ReadSettings",
+                  "recursive": false
+                },
+                "formatSettings": {
+                  "type": "BinaryReadSettings"
+                }
+              }
+            },
+            {
+              "name": "IfS3FileExists",
+              "type": "IfCondition",
+              "dependsOn": [
+                {
+                  "activity": "CheckS3FileExists",
+                  "dependencyConditions": [
+                    "Succeeded"
+                  ]
+                }
+              ],
+              "userProperties": [],
+              "typeProperties": {
+                "expression": {
+                  "value": "@equals(activity('CheckS3FileExists').output.exists, true)",
+                  "type": "Expression"
+                },
+                "ifTrueActivities": [
+                  {
+                    "name": "CopyS3FileToAdlsRaw",
+                    "type": "Copy",
+                    "dependsOn": [],
+                    "policy": {
+                      "timeout": "0.12:00:00",
+                      "retry": 2,
+                      "retryIntervalInSeconds": 60,
+                      "secureOutput": false,
+                      "secureInput": false
+                    },
+                    "userProperties": [
+                      {
+                        "name": "source",
+                        "value": "s3://@{pipeline().parameters.s3_bucket_name}/raw/@{item()}/odate=@{pipeline().parameters.odate}/@{item()}.csv"
+                      },
+                      {
+                        "name": "sink",
+                        "value": "abfss://raw/<storage-account>/@{item()}/odate=@{pipeline().parameters.odate}/@{item()}.csv"
+                      }
+                    ],
+                    "typeProperties": {
+                      "source": {
+                        "type": "BinarySource",
+                        "storeSettings": {
+                          "type": "AmazonS3ReadSettings",
+                          "recursive": false
+                        },
+                        "formatSettings": {
+                          "type": "BinaryReadSettings"
+                        }
+                      },
+                      "sink": {
+                        "type": "BinarySink",
+                        "storeSettings": {
+                          "type": "AzureBlobFSWriteSettings",
+                          "copyBehavior": "PreserveHierarchy"
+                        }
+                      },
+                      "enableStaging": false
+                    },
+                    "inputs": [
+                      {
+                        "referenceName": "ds_s3_raw_file_binary",
+                        "type": "DatasetReference",
+                        "parameters": {
+                          "bucketName": {
+                            "value": "@pipeline().parameters.s3_bucket_name",
+                            "type": "Expression"
+                          },
+                          "datasetName": {
+                            "value": "@item()",
+                            "type": "Expression"
+                          },
+                          "odate": {
+                            "value": "@pipeline().parameters.odate",
+                            "type": "Expression"
+                          }
+                        }
+                      }
+                    ],
+                    "outputs": [
+                      {
+                        "referenceName": "ds_adls_raw_file_binary",
+                        "type": "DatasetReference",
+                        "parameters": {
+                          "datasetName": {
+                            "value": "@item()",
+                            "type": "Expression"
+                          },
+                          "odate": {
+                            "value": "@pipeline().parameters.odate",
+                            "type": "Expression"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "ifFalseActivities": [
+                  {
+                    "name": "FailMissingS3File",
+                    "type": "Fail",
+                    "dependsOn": [],
+                    "userProperties": [],
+                    "typeProperties": {
+                      "message": {
+                        "value": "@concat('Missing expected S3 raw file for dataset=', item(), ', odate=', pipeline().parameters.odate, ', expected path=s3://', pipeline().parameters.s3_bucket_name, '/raw/', item(), '/odate=', pipeline().parameters.odate, '/', item(), '.csv')",
+                        "type": "Expression"
+                      },
+                      "errorCode": "S3_RAW_FILE_NOT_FOUND"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "parameters": {
+      "odate": {
+        "type": "string"
+      },
+      "s3_bucket_name": {
+        "type": "string"
+      },
+      "dataset_names": {
+        "type": "array",
+        "defaultValue": [
+          "patients",
+          "hospitals",
+          "doctors",
+          "diseases",
+          "attendance"
+        ]
+      }
+    },
+    "annotations": [
+      "batch",
+      "s3",
+      "adls-raw",
+      "manual"
+    ]
+  }
+}
