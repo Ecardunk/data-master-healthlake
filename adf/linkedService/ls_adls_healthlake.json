@@ -1,14 +1,10 @@
 {
-  "name": "ls_adls_healthlake",
-  "properties": {
-    "annotations": [],
-    "type": "AzureBlobFS",
-    "typeProperties": {
-      "url": "https://sthealthdatalake001.dfs.core.windows.net/"
-    },
-    "connectVia": {
-      "referenceName": "AutoResolveIntegrationRuntime",
-      "type": "IntegrationRuntimeReference"
-    }
-  }
+	"name": "ls_adls_healthlake",
+	"properties": {
+		"annotations": [],
+		"type": "AzureBlobFS",
+		"typeProperties": {
+			"url": "https://sthealthdatalake001.dfs.core.windows.net/"
+		}
+	}
 }
