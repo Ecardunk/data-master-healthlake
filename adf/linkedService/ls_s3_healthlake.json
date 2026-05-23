@@ -1,26 +1,14 @@
 {
-  "name": "ls_s3_healthlake",
-  "properties": {
-    "annotations": [],
-    "type": "AmazonS3",
-    "typeProperties": {
-      "accessKeyId": {
-        "type": "AzureKeyVaultSecret",
-        "store": {
-          "referenceName": "ls_keyvault_healthlake",
-          "type": "LinkedServiceReference"
-        },
-        "secretName": "aws-s3-access-key-id"
-      },
-      "secretAccessKey": {
-        "type": "AzureKeyVaultSecret",
-        "store": {
-          "referenceName": "ls_keyvault_healthlake",
-          "type": "LinkedServiceReference"
-        },
-        "secretName": "aws-s3-secret-access-key"
-      },
-      "serviceUrl": "https://s3.amazonaws.com"
-    }
-  }
+	"name": "ls_s3_healthlake",
+	"type": "Microsoft.DataFactory/factories/linkedservices",
+	"properties": {
+		"annotations": [],
+		"type": "AmazonS3",
+		"typeProperties": {
+			"serviceUrl": "",
+			"accessKeyId": "AKIAXF5HXZ7UYAUHTVKQ",
+			"authenticationType": "AccessKey",
+			"encryptedCredential": "ew0KICAiVmVyc2lvbiI6ICIyMDE3LTExLTMwIiwNCiAgIlByb3RlY3Rpb25Nb2RlIjogIktleSIsDQogICJTZWNyZXRDb250ZW50VHlwZSI6ICJQbGFpbnRleHQiLA0KICAiQ3JlZGVudGlhbElkIjogIkRBVEFGQUNUT1JZQEUzOUJFRTdGLTA3MTMtNEU0RC1CMzM2LUExNzFGQjVCNEQ1OF8xN2M3ZTQxNy1iMjE2LTQ0OGQtYTQ2Yy0zOWIzMTA4YzJjMGQiDQp9"
+		}
+	}
 }
