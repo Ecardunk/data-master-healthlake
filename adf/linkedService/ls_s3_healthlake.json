@@ -4,14 +4,21 @@
     "annotations": [],
     "type": "AmazonS3",
     "typeProperties": {
-      "accessKeyId": "<AWS_ACCESS_KEY_ID>",
+      "accessKeyId": {
+        "type": "AzureKeyVaultSecret",
+        "store": {
+          "referenceName": "ls_keyvault_healthlake",
+          "type": "LinkedServiceReference"
+        },
+        "secretName": "aws-s3-access-key-id"
+      },
       "secretAccessKey": {
         "type": "AzureKeyVaultSecret",
         "store": {
           "referenceName": "ls_keyvault_healthlake",
           "type": "LinkedServiceReference"
         },
-        "secretName": "<KEY_VAULT_SECRET_NAME_FOR_AWS_SECRET_ACCESS_KEY>"
+        "secretName": "aws-s3-secret-access-key"
       },
       "serviceUrl": "https://s3.amazonaws.com"
     }

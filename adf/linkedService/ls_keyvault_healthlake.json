@@ -4,7 +4,7 @@
     "annotations": [],
     "type": "AzureKeyVault",
     "typeProperties": {
-      "baseUrl": "https://<KEY_VAULT_NAME>.vault.azure.net/"
+      "baseUrl": "https://kv-data-master-case.vault.azure.net/"
     }
   }
 }
