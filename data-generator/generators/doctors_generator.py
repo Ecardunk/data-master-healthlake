@@ -18,12 +18,16 @@ class DoctorGenerator(BaseGenerator):
     def generate(
         self,
         n_records: int,
-        n_hospitals: int
+        n_hospitals: int,
+        starting_id: int
     ):
 
         doctors = []
 
-        for doctor_id in range(1, n_records + 1):
+        start_id = starting_id + 1
+        end_id = starting_id + n_records + 1
+
+        for doctor_id in range(start_id, end_id):
 
             doctors.append({
                 "doctor_id": doctor_id,

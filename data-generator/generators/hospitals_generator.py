@@ -14,11 +14,14 @@ class HospitalGenerator(BaseGenerator):
         "Specialized"
     ]
 
-    def generate(self, n_records: int):
+    def generate(self, n_records: int, starting_id: int):
 
         hospitals = []
 
-        for hospital_id in range(1, n_records + 1):
+        start_id = starting_id + 1
+        end_id = starting_id + n_records + 1
+
+        for hospital_id in range(start_id, end_id):
 
             hospitals.append({
                 "hospital_id": hospital_id,

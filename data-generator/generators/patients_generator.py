@@ -17,11 +17,18 @@ class PatientGenerator(BaseGenerator):
         "O-"
     ]
 
-    def generate(self, n_records: int):
+    def generate(self, n_records: int, starting_id: int):
 
         patients = []
 
-        for patient_id in range(1, n_records + 1):
+        start_id = starting_id + 1
+        end_id = starting_id + n_records + 1
+
+        for patient_id in range(
+            start_id,
+            end_id
+        ):
+
 
             patients.append({
                 "patient_id": patient_id,

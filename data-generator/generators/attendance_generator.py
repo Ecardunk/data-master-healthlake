@@ -13,12 +13,16 @@ class AttendanceGenerator(BaseGenerator):
         n_patients: int,
         n_doctors: int,
         n_hospitals: int,
-        n_diseases: int
+        n_diseases: int,
+        starting_id: int
     ):
 
         attendance = []
 
-        for attendance_id in range(1, n_records + 1):
+        start_id = starting_id + 1
+        end_id = starting_id + n_records + 1
+
+        for attendance_id in range(start_id, end_id):
 
             severity = np.random.choice(
                 [1, 2, 3, 4, 5],

@@ -1,7 +1,7 @@
-import os
+from pathlib import Path
 
 
 def ensure_directories(paths: list):
 
     for path in paths:
-        os.makedirs(path, exist_ok=True)
+        Path(path).mkdir(parents=True, exist_ok=True)
