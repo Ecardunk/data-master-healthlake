@@ -10,6 +10,7 @@ DATA_GENERATOR_DIR = Path(__file__).resolve().parents[1]
 sys.path.append(str(DATA_GENERATOR_DIR))
 
 from main import build_snapshot
+from generators.streaming_generator import StreamingEventGenerator
 from utils.dirty_data_utils import inject_duplicates, inject_nulls
 from utils.snapshot_utils import load_previous_snapshot, parse_odate
 
@@ -119,6 +120,19 @@ class BuildSnapshotTest(unittest.TestCase):
                 set(new_records["patient_id"]),
                 set(result["patient_id"]).intersection(new_records["patient_id"])
             )
+
+
+class StreamingGeneratorTest(unittest.TestCase):
+
+    def test_streaming_events_continue_from_starting_id(self):
+        result = StreamingEventGenerator().generate(
+            n_records=3,
+            n_patients=10,
+            starting_id=100
+        )
+
+        self.assertEqual(result["event_id"].tolist(), [101, 102, 103])
+        self.assertTrue(result["patient_id"].between(1, 10).all())
 
 
 if __name__ == "__main__":

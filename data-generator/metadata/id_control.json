@@ -3,5 +3,6 @@
     "doctor_id": 612,
     "hospital_id": 55,
     "disease_id": 32,
-    "attendance_id": 201000
+    "attendance_id": 201000,
+    "event_id": 5
 }
