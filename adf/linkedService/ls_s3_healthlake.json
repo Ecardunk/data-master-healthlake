@@ -1,5 +1,6 @@
 {
 	"name": "ls_s3_healthlake",
+	"type": "Microsoft.DataFactory/factories/linkedservices",
 	"properties": {
 		"annotations": [],
 		"type": "AmazonS3",
@@ -23,6 +24,5 @@
 			},
 			"authenticationType": "AccessKey"
 		}
-	},
-	"type": "Microsoft.DataFactory/factories/linkedservices"
+	}
 }

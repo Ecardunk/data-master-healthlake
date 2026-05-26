@@ -1,5 +1,6 @@
 {
 	"name": "ls_adls_healthlake",
+	"type": "Microsoft.DataFactory/factories/linkedservices",
 	"properties": {
 		"annotations": [],
 		"type": "AzureBlobFS",
