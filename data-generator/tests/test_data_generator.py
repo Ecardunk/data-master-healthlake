@@ -1,6 +1,7 @@
 import sys
 import tempfile
 import unittest
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -9,7 +10,7 @@ import pandas as pd
 DATA_GENERATOR_DIR = Path(__file__).resolve().parents[1]
 sys.path.append(str(DATA_GENERATOR_DIR))
 
-from main import build_snapshot
+from main import build_snapshot, save_streaming_events
 from generators.streaming_generator import StreamingEventGenerator
 from utils.dirty_data_utils import inject_duplicates, inject_nulls
 from utils.snapshot_utils import load_previous_snapshot, parse_odate
@@ -133,6 +134,27 @@ class StreamingGeneratorTest(unittest.TestCase):
 
         self.assertEqual(result["event_id"].tolist(), [101, 102, 103])
         self.assertTrue(result["patient_id"].between(1, 10).all())
+
+    def test_save_streaming_events_uses_event_id_range(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp)
+            df = pd.DataFrame({
+                "event_id": [10, 11],
+                "patient_id": [1, 2]
+            })
+
+            output_path = save_streaming_events(df, output_dir)
+
+            self.assertEqual(
+                output_path.name,
+                "streaming_events_10_11.jsonl"
+            )
+            self.assertTrue(output_path.exists())
+
+            lines = output_path.read_text(encoding="utf-8").splitlines()
+
+            self.assertEqual(len(lines), 2)
+            self.assertEqual(json.loads(lines[0])["event_id"], 10)
 
 
 if __name__ == "__main__":

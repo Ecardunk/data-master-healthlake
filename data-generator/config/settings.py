@@ -3,6 +3,7 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 OUTPUT_DIR_RAW = BASE_DIR / "output" / "raw"
+OUTPUT_DIR_STREAMING = BASE_DIR / "output" / "streaming"
 METADATA_FILE = BASE_DIR / "metadata" / "id_control.json"
 
 N_PATIENTS = 5000

@@ -14,7 +14,8 @@ from config.settings import (
     N_DOCTORS,
     N_HOSPITALS,
     N_PATIENTS,
-    OUTPUT_DIR_RAW
+    OUTPUT_DIR_RAW,
+    OUTPUT_DIR_STREAMING
 )
 
 from utils.churn_utils import remove_random_rows
@@ -28,7 +29,10 @@ from generators.doctors_generator import DoctorGenerator
 from generators.hospitals_generator import HospitalGenerator
 from generators.patients_generator import PatientGenerator
 from generators.streaming_generator import StreamingEventGenerator
-from producers.eventhub_producer import send_dataframe_to_eventhub
+from producers.eventhub_producer import (
+    record_to_json,
+    send_dataframe_to_eventhub
+)
 
 
 def parse_args():
@@ -174,6 +178,23 @@ def save_snapshot(df, output_dir, file_name):
     )
 
 
+def save_streaming_events(df, output_dir):
+    if df.empty:
+        raise ValueError("Cannot save an empty streaming events dataset")
+
+    start_event_id = int(df["event_id"].min())
+    end_event_id = int(df["event_id"].max())
+    file_name = f"streaming_events_{start_event_id}_{end_event_id}.jsonl"
+    output_path = output_dir / file_name
+
+    with open(output_path, "w", encoding="utf-8") as file:
+        for record in df.to_dict(orient="records"):
+            file.write(record_to_json(record))
+            file.write("\n")
+
+    return output_path
+
+
 def load_env():
     try:
         from dotenv import load_dotenv
@@ -258,6 +279,12 @@ def run_streaming(args):
         metadata["event_id"]
     )
 
+    ensure_directories([OUTPUT_DIR_STREAMING])
+    output_path = save_streaming_events(
+        events_df,
+        OUTPUT_DIR_STREAMING
+    )
+
     metadata["event_id"] += args.stream_count
     save_metadata(metadata)
 
@@ -267,6 +294,7 @@ def run_streaming(args):
         f"new={args.stream_count}, "
         f"last_event_id={metadata['event_id']}"
     )
+    print(f"saved_file={output_path}")
 
     if args.send_eventhub:
         connection_str, eventhub_name = resolve_eventhub_config(args)
