@@ -6,7 +6,7 @@
 			"type": "LinkedServiceReference"
 		},
 		"parameters": {
-			"datasetNam": {
+			"datasetName": {
 				"type": "string"
 			},
 			"odate": {
