@@ -167,7 +167,7 @@
 												"referenceName": "ds_adls_raw_file_binary",
 												"type": "DatasetReference",
 												"parameters": {
-													"datasetName": {
+													"datasetNam": {
 														"value": "@item()",
 														"type": "Expression"
 													},
