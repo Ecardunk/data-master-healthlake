@@ -6,7 +6,7 @@
 			"type": "LinkedServiceReference"
 		},
 		"parameters": {
-			"bucketNam": {
+			"bucketName": {
 				"type": "string"
 			},
 			"datasetName": {
