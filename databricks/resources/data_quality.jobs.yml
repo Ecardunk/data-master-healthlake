@@ -1,0 +1,57 @@
+resources:
+  jobs:
+    healthlake_bronze_to_silver_dq:
+      name: healthlake-dq-bronze-to-silver-${bundle.target}
+      description: DQX gate that protects Silver from invalid Bronze snapshots.
+      max_concurrent_runs: 1
+      queue:
+        enabled: true
+      email_notifications:
+        on_failure:
+          - ${var.dq_alert_email}
+      tasks:
+        - task_key: validate_bronze_snapshot
+          spark_python_task:
+            python_file: ../src/dq/quality_gate.py
+            parameters:
+              - --stage
+              - bronze_to_silver
+              - --catalog
+              - ${var.catalog}
+              - --run-id
+              - '{{job.run_id}}'
+          environment_key: dqx_serverless
+      environments:
+        - environment_key: dqx_serverless
+          spec:
+            environment_version: '2'
+            dependencies:
+              - databricks-labs-dqx
+
+    healthlake_silver_to_gold_dq:
+      name: healthlake-dq-silver-to-gold-${bundle.target}
+      description: DQX gate that protects Gold from invalid Silver snapshots.
+      max_concurrent_runs: 1
+      queue:
+        enabled: true
+      email_notifications:
+        on_failure:
+          - ${var.dq_alert_email}
+      tasks:
+        - task_key: validate_silver_snapshot
+          spark_python_task:
+            python_file: ../src/dq/quality_gate.py
+            parameters:
+              - --stage
+              - silver_to_gold
+              - --catalog
+              - ${var.catalog}
+              - --run-id
+              - '{{job.run_id}}'
+          environment_key: dqx_serverless
+      environments:
+        - environment_key: dqx_serverless
+          spec:
+            environment_version: '2'
+            dependencies:
+              - databricks-labs-dqx
