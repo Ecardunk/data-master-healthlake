@@ -1,5 +1,21 @@
 # HealthLake Medallion Bundle
 
+## Governança de acesso
+
+Os grupos são criados no nível da conta Databricks e atribuídos ao workspace
+com a entitlement `USER`; a matriz de privilégios do Unity Catalog está em
+[`src/governance/unity_catalog_access.sql`](src/governance/unity_catalog_access.sql).
+
+| Grupo | Acesso a dados | Não recebe |
+| --- | --- | --- |
+| `healthlake-dev-bi-readers` | `SELECT` na camada Gold | Bronze, Silver, escrita e administração |
+| `healthlake-dev-data-analysts` | `SELECT` na camada Gold | Bronze, Silver, escrita e administração |
+| `healthlake-dev-data-engineers-readers` | `SELECT` nas camadas Bronze e Silver | Gold, escrita, acesso direto ao ADLS e administração |
+
+Os grupos começam vazios de propósito: a associação de pessoas deve ser feita
+no IdP/SCIM de acordo com a função de cada colaborador, sem conceder privilégios
+diretamente a usuários.
+
 Este diretório é o deployável do Databricks para o case. Ele usa **Lakeflow
 Pipelines**, o nome atual do Delta Live Tables (DLT), e **Declarative
 Automation Bundles**, o nome atual do Databricks Asset Bundles (DAB).
