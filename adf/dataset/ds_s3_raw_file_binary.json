@@ -1,39 +1,39 @@
 {
-  "name": "ds_s3_raw_file_binary",
-  "properties": {
-    "linkedServiceName": {
-      "referenceName": "ls_s3_healthlake",
-      "type": "LinkedServiceReference"
-    },
-    "parameters": {
-      "bucketName": {
-        "type": "string"
-      },
-      "datasetName": {
-        "type": "string"
-      },
-      "odate": {
-        "type": "string"
-      }
-    },
-    "annotations": [],
-    "type": "Binary",
-    "typeProperties": {
-      "location": {
-        "type": "AmazonS3Location",
-        "bucketName": {
-          "value": "@dataset().bucketName",
-          "type": "Expression"
-        },
-        "folderPath": {
-          "value": "@concat('raw/', dataset().datasetName, '/odate=', dataset().odate)",
-          "type": "Expression"
-        },
-        "fileName": {
-          "value": "@concat(dataset().datasetName, '.csv')",
-          "type": "Expression"
-        }
-      }
-    }
-  }
+	"name": "ds_s3_raw_file_binary",
+	"properties": {
+		"linkedServiceName": {
+			"referenceName": "ls_s3_healthlake",
+			"type": "LinkedServiceReference"
+		},
+		"parameters": {
+			"bucketName": {
+				"type": "string"
+			},
+			"datasetName": {
+				"type": "string"
+			},
+			"odate": {
+				"type": "string"
+			}
+		},
+		"annotations": [],
+		"type": "Binary",
+		"typeProperties": {
+			"location": {
+				"type": "AmazonS3Location",
+				"bucketName": {
+					"value": "@dataset().bucketName",
+					"type": "Expression"
+				},
+				"folderPath": {
+					"value": "@concat('raw/', dataset().datasetName, '/odate=', dataset().odate)",
+					"type": "Expression"
+				},
+				"fileName": {
+					"value": "@concat(dataset().datasetName, '.csv')",
+					"type": "Expression"
+				}
+			}
+		}
+	}
 }

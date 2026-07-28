@@ -1,33 +1,33 @@
 {
-  "name": "ds_adls_raw_file_binary",
-  "properties": {
-    "linkedServiceName": {
-      "referenceName": "ls_adls_healthlake",
-      "type": "LinkedServiceReference"
-    },
-    "parameters": {
-      "datasetName": {
-        "type": "string"
-      },
-      "odate": {
-        "type": "string"
-      }
-    },
-    "annotations": [],
-    "type": "Binary",
-    "typeProperties": {
-      "location": {
-        "type": "AzureBlobFSLocation",
-        "fileSystem": "raw",
-        "folderPath": {
-          "value": "@concat(dataset().datasetName, '/odate=', dataset().odate)",
-          "type": "Expression"
-        },
-        "fileName": {
-          "value": "@concat(dataset().datasetName, '.csv')",
-          "type": "Expression"
-        }
-      }
-    }
-  }
+	"name": "ds_adls_raw_file_binary",
+	"properties": {
+		"linkedServiceName": {
+			"referenceName": "ls_adls_healthlake",
+			"type": "LinkedServiceReference"
+		},
+		"parameters": {
+			"datasetName": {
+				"type": "string"
+			},
+			"odate": {
+				"type": "string"
+			}
+		},
+		"annotations": [],
+		"type": "Binary",
+		"typeProperties": {
+			"location": {
+				"type": "AzureBlobFSLocation",
+				"fileName": {
+					"value": "@concat(dataset().datasetName, '.csv')",
+					"type": "Expression"
+				},
+				"folderPath": {
+					"value": "@concat(dataset().datasetName, '/odate=', dataset().odate)",
+					"type": "Expression"
+				},
+				"fileSystem": "raw"
+			}
+		}
+	}
 }
