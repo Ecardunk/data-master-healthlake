@@ -8,6 +8,12 @@ com a entitlement `USER`; a matriz de privilégios do Unity Catalog está em
 
 | Grupo | Acesso a dados | Não recebe |
 | --- | --- | --- |
+| `healthlake-dev-data-engineers-contributors` | Criar tabelas e escrever em Bronze/Silver; criar jobs e pipelines próprios | Gold, quarentena, external locations e administração global |
+
+Os contribuidores usam o diretório de autoria
+`/Workspace/Users/cardosoestevo@yahoo.com.br/healthlake-engineering`, onde o
+grupo tem `CAN_MANAGE`. Cada pessoa passa a ter `CAN_MANAGE` somente nos jobs
+e pipelines que ela criar; o grupo não recebeu gestão dos pipelines publicados.
 | `healthlake-dev-bi-readers` | `SELECT` na camada Gold | Bronze, Silver, escrita e administração |
 | `healthlake-dev-data-analysts` | `SELECT` na camada Gold | Bronze, Silver, escrita e administração |
 | `healthlake-dev-data-engineers-readers` | `SELECT` nas camadas Bronze e Silver | Gold, escrita, acesso direto ao ADLS e administração |

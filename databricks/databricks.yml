@@ -22,3 +22,12 @@ targets:
     mode: development
     workspace:
       host: https://adb-7405611974072786.6.azuredatabricks.net
+  prod:
+    mode: production
+    workspace:
+      # Resolves to the CI Service Principal's private bundle directory.
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      catalog: healthlake_prod
+      # The production CD workflow overrides this value with DATABRICKS_RAW_ROOT.
+      raw_root: abfss://raw@replace-me.dfs.core.windows.net

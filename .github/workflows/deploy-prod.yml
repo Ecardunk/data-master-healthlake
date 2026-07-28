@@ -1,0 +1,44 @@
+name: Deploy production
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref already reviewed and approved for production.
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: healthlake-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Configure required reviewers in this GitHub Environment.
+    environment: production
+    env:
+      DATABRICKS_AUTH_TYPE: oauth-m2m
+      DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
+      DATABRICKS_CLIENT_ID: ${{ vars.DATABRICKS_CLIENT_ID }}
+      DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+      DATABRICKS_RAW_ROOT: ${{ vars.DATABRICKS_RAW_ROOT }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: databricks/setup-cli@main
+      - name: Validate production target
+        working-directory: databricks
+        run: >-
+          databricks bundle validate --target prod
+          --var "raw_root=${DATABRICKS_RAW_ROOT}"
+      - name: Deploy production target
+        working-directory: databricks
+        run: >-
+          databricks bundle deploy --target prod
+          --var "raw_root=${DATABRICKS_RAW_ROOT}"

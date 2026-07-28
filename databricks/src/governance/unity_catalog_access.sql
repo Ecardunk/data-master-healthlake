@@ -19,3 +19,9 @@ GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_dev.gold TO `healthlake-dev-data-a
 GRANT USE CATALOG ON CATALOG healthlake_dev TO `healthlake-dev-data-engineers-readers`;
 GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_dev.bronze TO `healthlake-dev-data-engineers-readers`;
 GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_dev.silver TO `healthlake-dev-data-engineers-readers`;
+
+-- Contributors can author jobs/pipelines and write operational layers.
+-- They have no Gold, quarantine, external-location, or global-admin access.
+GRANT USE CATALOG ON CATALOG healthlake_dev TO `healthlake-dev-data-engineers-contributors`;
+GRANT USE SCHEMA, SELECT, MODIFY, CREATE TABLE ON SCHEMA healthlake_dev.bronze TO `healthlake-dev-data-engineers-contributors`;
+GRANT USE SCHEMA, SELECT, MODIFY, CREATE TABLE ON SCHEMA healthlake_dev.silver TO `healthlake-dev-data-engineers-contributors`;
