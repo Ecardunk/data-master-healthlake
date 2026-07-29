@@ -25,3 +25,28 @@ GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_dev.silver TO `healthlake-dev-data
 GRANT USE CATALOG ON CATALOG healthlake_dev TO `healthlake-dev-data-engineers-contributors`;
 GRANT USE SCHEMA, SELECT, MODIFY, CREATE TABLE ON SCHEMA healthlake_dev.bronze TO `healthlake-dev-data-engineers-contributors`;
 GRANT USE SCHEMA, SELECT, MODIFY, CREATE TABLE ON SCHEMA healthlake_dev.silver TO `healthlake-dev-data-engineers-contributors`;
+
+-- -------------------------------------------------------------------------
+-- Production: acesso humano estritamente de leitura.
+--
+-- Estes grupos devem receber somente a atribuição USER no workspace de
+-- produção. Não crie um grupo "contributors" no workspace produtivo: a
+-- escrita e a criação de jobs/pipelines ficam restritas à identidade de
+-- serviço usada pelo CI/CD, com privilégios mínimos e auditáveis.
+--
+-- Não conceda aos grupos abaixo MODIFY, CREATE TABLE, CREATE SCHEMA,
+-- MANAGE, READ_FILES, WRITE_FILES, acesso a external locations ou acesso
+-- ao schema quarantine. Também não conceda permissões diretas a usuários.
+
+-- Consumidores de dados: somente produtos curados da Gold.
+GRANT USE CATALOG ON CATALOG healthlake_prod TO `healthlake-prod-bi-readers`;
+GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_prod.gold TO `healthlake-prod-bi-readers`;
+
+GRANT USE CATALOG ON CATALOG healthlake_prod TO `healthlake-prod-data-analysts`;
+GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_prod.gold TO `healthlake-prod-data-analysts`;
+
+-- Engenharia: diagnóstico das camadas operacionais, sempre sem escrita.
+-- Gold permanece reservada aos consumidores analíticos acima.
+GRANT USE CATALOG ON CATALOG healthlake_prod TO `healthlake-prod-data-engineers-readers`;
+GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_prod.bronze TO `healthlake-prod-data-engineers-readers`;
+GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_prod.silver TO `healthlake-prod-data-engineers-readers`;

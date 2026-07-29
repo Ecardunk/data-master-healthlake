@@ -29,5 +29,5 @@ targets:
       root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
     variables:
       catalog: healthlake_prod
-      # The production CD workflow overrides this value with DATABRICKS_RAW_ROOT.
-      raw_root: abfss://raw@replace-me.dfs.core.windows.net
+      # The production CD workflow can override this with DATABRICKS_RAW_ROOT.
+      raw_root: abfss://raw@sthlkprodbrs01.dfs.core.windows.net
