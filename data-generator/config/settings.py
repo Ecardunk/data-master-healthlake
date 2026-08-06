@@ -6,18 +6,12 @@ OUTPUT_DIR_RAW = BASE_DIR / "output" / "raw"
 OUTPUT_DIR_STREAMING = BASE_DIR / "output" / "streaming"
 METADATA_FILE = BASE_DIR / "metadata" / "id_control.json"
 
-N_PATIENTS = 5000
-N_HOSPITALS = 5
-N_DOCTORS = 12
-N_DISEASES = 2
-N_ATTENDANCE = 1000
-
 RECORD_COUNTS = {
-    "patients": N_PATIENTS,
-    "hospitals": N_HOSPITALS,
-    "doctors": N_DOCTORS,
-    "diseases": N_DISEASES,
-    "attendance": N_ATTENDANCE
+    "patients": 5000,
+    "hospitals": 5,
+    "doctors": 12,
+    "diseases": 2,
+    "attendance": 1000
 }
 
 DATASET_PROFILES = {

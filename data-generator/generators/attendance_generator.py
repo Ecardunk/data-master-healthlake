@@ -1,6 +1,5 @@
-import pandas as pd
-import random
 import numpy as np
+import random
 
 from generators.base_generator import BaseGenerator
 
@@ -16,14 +15,9 @@ class AttendanceGenerator(BaseGenerator):
         n_diseases: int,
         starting_id: int
     ):
-
         attendance = []
 
-        start_id = starting_id + 1
-        end_id = starting_id + n_records + 1
-
-        for attendance_id in range(start_id, end_id):
-
+        for attendance_id in self.iter_ids(n_records, starting_id):
             severity = np.random.choice(
                 [1, 2, 3, 4, 5],
                 p=[0.40, 0.30, 0.15, 0.10, 0.05]
@@ -63,6 +57,4 @@ class AttendanceGenerator(BaseGenerator):
                 "created_at": attendance_date
             })
 
-        df = pd.DataFrame(attendance)
-
-        return self.apply_data_quality_issues(df)
+        return self.build_dataframe(attendance)

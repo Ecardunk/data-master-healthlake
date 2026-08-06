@@ -1,21 +1,20 @@
 import argparse
 import os
 import random
-from pathlib import Path
+from dataclasses import dataclass
+from uuid import uuid4
 
 import numpy as np
 import pandas as pd
 from faker import Faker
+from dotenv import load_dotenv
 
 from config.settings import (
+    BASE_DIR,
     DATASET_PROFILES,
-    N_ATTENDANCE,
-    N_DISEASES,
-    N_DOCTORS,
-    N_HOSPITALS,
-    N_PATIENTS,
     OUTPUT_DIR_RAW,
-    OUTPUT_DIR_STREAMING
+    OUTPUT_DIR_STREAMING,
+    RECORD_COUNTS
 )
 
 from utils.churn_utils import remove_random_rows
@@ -24,6 +23,7 @@ from utils.metadata_utils import load_metadata, save_metadata
 from utils.snapshot_utils import load_previous_snapshot, parse_odate
 
 from generators.attendance_generator import AttendanceGenerator
+from generators.base_generator import BaseGenerator
 from generators.diseases_generator import DiseaseGenerator
 from generators.doctors_generator import DoctorGenerator
 from generators.hospitals_generator import HospitalGenerator
@@ -32,6 +32,42 @@ from generators.streaming_generator import StreamingEventGenerator
 from producers.eventhub_producer import (
     record_to_json,
     send_dataframe_to_eventhub
+)
+
+
+@dataclass(frozen=True)
+class DatasetSpec:
+    name: str
+    generator_type: type[BaseGenerator]
+    metadata_key: str
+    reference_limits: tuple[tuple[str, str], ...] = ()
+
+    @property
+    def file_name(self):
+        return f"{self.name}.csv"
+
+
+DATASET_SPECS = (
+    DatasetSpec("hospitals", HospitalGenerator, "hospital_id"),
+    DatasetSpec("patients", PatientGenerator, "patient_id"),
+    DatasetSpec(
+        "doctors",
+        DoctorGenerator,
+        "doctor_id",
+        (("n_hospitals", "hospitals"),)
+    ),
+    DatasetSpec("diseases", DiseaseGenerator, "disease_id"),
+    DatasetSpec(
+        "attendance",
+        AttendanceGenerator,
+        "attendance_id",
+        (
+            ("n_patients", "patients"),
+            ("n_doctors", "doctors"),
+            ("n_hospitals", "hospitals"),
+            ("n_diseases", "diseases")
+        )
+    )
 )
 
 
@@ -83,10 +119,6 @@ def parse_args():
     return parser.parse_args()
 
 
-def validate_odate(odate):
-    parse_odate(odate)
-
-
 def validate_args(args):
     if args.streaming:
         if args.stream_count <= 0:
@@ -96,7 +128,7 @@ def validate_args(args):
     if not args.odate:
         raise ValueError("--odate is required unless --streaming is used")
 
-    validate_odate(args.odate)
+    parse_odate(args.odate)
 
 
 def configure_randomness(seed):
@@ -108,12 +140,8 @@ def configure_randomness(seed):
     Faker.seed(seed)
 
 
-def profile_for(dataset_name):
-    return DATASET_PROFILES.get(dataset_name, {})
-
-
 def quality_kwargs(dataset_name):
-    profile = profile_for(dataset_name)
+    profile = DATASET_PROFILES.get(dataset_name, {})
 
     return {
         "null_percentages": profile.get("null_percentages", {}),
@@ -128,7 +156,7 @@ def build_snapshot(
     odate,
     new_records
 ):
-    profile = profile_for(dataset_name)
+    profile = DATASET_PROFILES.get(dataset_name, {})
     previous_snapshot = load_previous_snapshot(
         raw_base_dir,
         odate,
@@ -171,11 +199,41 @@ def build_snapshot(
     return snapshot
 
 
-def save_snapshot(df, output_dir, file_name):
-    df.to_csv(
-        output_dir / file_name,
-        index=False
+def temporary_path_for(output_path):
+    return output_path.with_name(
+        f".{output_path.name}.{uuid4().hex}.tmp"
     )
+
+
+def write_snapshot(df, output_path):
+    df.to_csv(output_path, index=False)
+
+
+def save_snapshot(df, output_path):
+    temp_path = temporary_path_for(output_path)
+
+    try:
+        write_snapshot(df, temp_path)
+        temp_path.replace(output_path)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+def save_snapshots(snapshots, output_dir):
+    pending_files = []
+
+    try:
+        for spec in DATASET_SPECS:
+            output_path = output_dir / spec.file_name
+            temp_path = temporary_path_for(output_path)
+            pending_files.append((temp_path, output_path))
+            write_snapshot(snapshots[spec.name], temp_path)
+
+        for temp_path, output_path in pending_files:
+            temp_path.replace(output_path)
+    finally:
+        for temp_path, _ in pending_files:
+            temp_path.unlink(missing_ok=True)
 
 
 def save_streaming_events(df, output_dir):
@@ -186,45 +244,23 @@ def save_streaming_events(df, output_dir):
     end_event_id = int(df["event_id"].max())
     file_name = f"streaming_events_{start_event_id}_{end_event_id}.jsonl"
     output_path = output_dir / file_name
+    temp_path = temporary_path_for(output_path)
 
-    with open(output_path, "w", encoding="utf-8") as file:
-        for record in df.to_dict(orient="records"):
-            file.write(record_to_json(record))
-            file.write("\n")
+    try:
+        with open(temp_path, "w", encoding="utf-8") as file:
+            for record in df.to_dict(orient="records"):
+                file.write(record_to_json(record))
+                file.write("\n")
+
+        temp_path.replace(output_path)
+    finally:
+        temp_path.unlink(missing_ok=True)
 
     return output_path
 
 
 def load_env():
-    try:
-        from dotenv import load_dotenv
-
-        load_dotenv()
-        return
-    except ImportError:
-        pass
-
-    env_paths = [
-        Path.cwd() / ".env",
-        Path(__file__).resolve().parents[1] / ".env"
-    ]
-
-    for env_path in env_paths:
-        if not env_path.exists():
-            continue
-
-        with open(env_path, "r", encoding="utf-8") as file:
-            for line in file:
-                line = line.strip()
-
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-
-                key, value = line.split("=", 1)
-                os.environ.setdefault(
-                    key.strip(),
-                    value.strip()
-                )
+    load_dotenv(BASE_DIR.parent / ".env")
 
 
 def resolve_eventhub_config(args):
@@ -274,9 +310,9 @@ def run_streaming(args):
     print("\nGenerating streaming events:")
 
     events_df = StreamingEventGenerator().generate(
-        args.stream_count,
-        current_patient_id,
-        metadata["event_id"]
+        n_records=args.stream_count,
+        starting_id=metadata["event_id"],
+        n_patients=current_patient_id
     )
 
     ensure_directories([OUTPUT_DIR_STREAMING])
@@ -284,17 +320,6 @@ def run_streaming(args):
         events_df,
         OUTPUT_DIR_STREAMING
     )
-
-    metadata["event_id"] += args.stream_count
-    save_metadata(metadata)
-
-    print(
-        f"streaming_events: previous_event_id="
-        f"{metadata['event_id'] - args.stream_count}, "
-        f"new={args.stream_count}, "
-        f"last_event_id={metadata['event_id']}"
-    )
-    print(f"saved_file={output_path}")
 
     if args.send_eventhub:
         connection_str, eventhub_name = resolve_eventhub_config(args)
@@ -305,6 +330,17 @@ def run_streaming(args):
         )
         target_name = eventhub_name or "connection string EntityPath"
         print(f"\nSent {sent_count} events to Event Hub '{target_name}'")
+
+    previous_event_id = metadata["event_id"]
+    metadata["event_id"] += args.stream_count
+    save_metadata(metadata)
+
+    print(
+        f"streaming_events: previous_event_id={previous_event_id}, "
+        f"new={args.stream_count}, "
+        f"last_event_id={metadata['event_id']}"
+    )
+    print(f"saved_file={output_path}")
 
     print("\nMetadata updated successfully")
     print("\n===================================")
@@ -322,6 +358,52 @@ def validate_output_partition(output_dir, overwrite):
         )
 
 
+def calculate_max_ids(metadata):
+    return {
+        spec.name: metadata[spec.metadata_key] + RECORD_COUNTS[spec.name]
+        for spec in DATASET_SPECS
+    }
+
+
+def generate_new_records(spec, metadata, max_ids):
+    reference_kwargs = {
+        argument_name: max_ids[dataset_name]
+        for argument_name, dataset_name in spec.reference_limits
+    }
+
+    generator = spec.generator_type(**quality_kwargs(spec.name))
+
+    return generator.generate(
+        n_records=RECORD_COUNTS[spec.name],
+        starting_id=metadata[spec.metadata_key],
+        **reference_kwargs
+    )
+
+
+def generate_snapshots(raw_base_dir, odate, metadata):
+    max_ids = calculate_max_ids(metadata)
+
+    return {
+        spec.name: build_snapshot(
+            spec.name,
+            spec.file_name,
+            raw_base_dir,
+            odate,
+            generate_new_records(spec, metadata, max_ids)
+        )
+        for spec in DATASET_SPECS
+    }
+
+
+def advance_metadata(metadata):
+    updated_metadata = metadata.copy()
+
+    for spec in DATASET_SPECS:
+        updated_metadata[spec.metadata_key] += RECORD_COUNTS[spec.name]
+
+    return updated_metadata
+
+
 def main():
     args = parse_args()
     validate_args(args)
@@ -334,11 +416,9 @@ def main():
     raw_base_dir = OUTPUT_DIR_RAW
     output_dir = raw_base_dir / f"odate={args.odate}"
 
-    ensure_directories([
-        raw_base_dir,
-        output_dir
-    ])
+    ensure_directories([raw_base_dir])
     validate_output_partition(output_dir, args.overwrite)
+    ensure_directories([output_dir])
 
     metadata = load_metadata()
 
@@ -346,79 +426,15 @@ def main():
     print(metadata)
     print("\nGenerating snapshots:")
 
-    hospital_df = build_snapshot(
-        "hospitals",
-        "hospitals.csv",
+    snapshots = generate_snapshots(
         raw_base_dir,
         args.odate,
-        HospitalGenerator(**quality_kwargs("hospitals")).generate(
-            N_HOSPITALS,
-            metadata["hospital_id"]
-        )
+        metadata
     )
+    updated_metadata = advance_metadata(metadata)
 
-    patient_df = build_snapshot(
-        "patients",
-        "patients.csv",
-        raw_base_dir,
-        args.odate,
-        PatientGenerator(**quality_kwargs("patients")).generate(
-            N_PATIENTS,
-            metadata["patient_id"]
-        )
-    )
-
-    doctor_df = build_snapshot(
-        "doctors",
-        "doctors.csv",
-        raw_base_dir,
-        args.odate,
-        DoctorGenerator(**quality_kwargs("doctors")).generate(
-            N_DOCTORS,
-            metadata["hospital_id"] + N_HOSPITALS,
-            metadata["doctor_id"]
-        )
-    )
-
-    disease_df = build_snapshot(
-        "diseases",
-        "diseases.csv",
-        raw_base_dir,
-        args.odate,
-        DiseaseGenerator(**quality_kwargs("diseases")).generate(
-            N_DISEASES,
-            metadata["disease_id"]
-        )
-    )
-
-    attendance_df = build_snapshot(
-        "attendance",
-        "attendance.csv",
-        raw_base_dir,
-        args.odate,
-        AttendanceGenerator(**quality_kwargs("attendance")).generate(
-            N_ATTENDANCE,
-            metadata["patient_id"] + N_PATIENTS,
-            metadata["doctor_id"] + N_DOCTORS,
-            metadata["hospital_id"] + N_HOSPITALS,
-            metadata["disease_id"] + N_DISEASES,
-            metadata["attendance_id"]
-        )
-    )
-
-    metadata["patient_id"] += N_PATIENTS
-    metadata["doctor_id"] += N_DOCTORS
-    metadata["hospital_id"] += N_HOSPITALS
-    metadata["disease_id"] += N_DISEASES
-    metadata["attendance_id"] += N_ATTENDANCE
-
-    save_metadata(metadata)
-
-    save_snapshot(hospital_df, output_dir, "hospitals.csv")
-    save_snapshot(patient_df, output_dir, "patients.csv")
-    save_snapshot(doctor_df, output_dir, "doctors.csv")
-    save_snapshot(disease_df, output_dir, "diseases.csv")
-    save_snapshot(attendance_df, output_dir, "attendance.csv")
+    save_snapshots(snapshots, output_dir)
+    save_metadata(updated_metadata)
 
     print("\nMetadata updated successfully")
     print("\n===================================")

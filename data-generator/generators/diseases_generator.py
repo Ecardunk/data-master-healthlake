@@ -1,4 +1,3 @@
-import pandas as pd
 import random
 
 from generators.base_generator import BaseGenerator
@@ -25,14 +24,9 @@ class DiseaseGenerator(BaseGenerator):
     ]
 
     def generate(self, n_records: int, starting_id: int):
-
         diseases = []
 
-        start_id = starting_id + 1
-        end_id = starting_id + n_records + 1
-
-        for disease_id in range(start_id, end_id):
-
+        for disease_id in self.iter_ids(n_records, starting_id):
             diseases.append({
                 "disease_id": disease_id,
                 "disease_name": random.choice(
@@ -48,6 +42,4 @@ class DiseaseGenerator(BaseGenerator):
                 )
             })
 
-        df = pd.DataFrame(diseases)
-
-        return self.apply_data_quality_issues(df)
+        return self.build_dataframe(diseases)

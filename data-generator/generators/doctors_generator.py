@@ -1,4 +1,3 @@
-import pandas as pd
 import random
 
 from generators.base_generator import BaseGenerator
@@ -21,14 +20,9 @@ class DoctorGenerator(BaseGenerator):
         n_hospitals: int,
         starting_id: int
     ):
-
         doctors = []
 
-        start_id = starting_id + 1
-        end_id = starting_id + n_records + 1
-
-        for doctor_id in range(start_id, end_id):
-
+        for doctor_id in self.iter_ids(n_records, starting_id):
             doctors.append({
                 "doctor_id": doctor_id,
                 "doctor_name": self.fake.name(),
@@ -46,6 +40,4 @@ class DoctorGenerator(BaseGenerator):
                 )
             })
 
-        df = pd.DataFrame(doctors)
-
-        return self.apply_data_quality_issues(df)
+        return self.build_dataframe(doctors)

@@ -1,4 +1,3 @@
-import pandas as pd
 import random
 
 from generators.base_generator import BaseGenerator
@@ -12,14 +11,9 @@ class StreamingEventGenerator(BaseGenerator):
         n_patients: int,
         starting_id: int
     ):
-
         events = []
 
-        start_id = starting_id + 1
-        end_id = starting_id + n_records + 1
-
-        for event_id in range(start_id, end_id):
-
+        for event_id in self.iter_ids(n_records, starting_id):
             events.append({
                 "event_id": event_id,
                 "patient_id": random.randint(
@@ -46,6 +40,4 @@ class StreamingEventGenerator(BaseGenerator):
                 )
             })
 
-        df = pd.DataFrame(events)
-
-        return self.apply_data_quality_issues(df)
+        return self.build_dataframe(events)
