@@ -33,8 +33,8 @@ class BaseGenerator:
 
     @staticmethod
     def iter_ids(n_records: int, starting_id: int):
-        if n_records <= 0:
-            raise ValueError("n_records must be greater than zero")
+        if n_records < 0:
+            raise ValueError("n_records cannot be negative")
 
         return range(
             starting_id + 1,
