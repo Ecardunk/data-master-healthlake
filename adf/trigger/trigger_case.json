@@ -1,0 +1,44 @@
+{
+	"name": "trigger_case",
+	"properties": {
+		"description": "Todo dia 05 de cada mês/",
+		"annotations": [],
+		"runtimeState": "Started",
+		"pipelines": [
+			{
+				"pipelineReference": {
+					"referenceName": "pl_copy_s3_to_adls_raw",
+					"type": "PipelineReference"
+				},
+				"parameters": {
+					"odate": "@convertTimeZone(trigger().scheduledTime,'UTC','E. South America Standard Time','yyyy-MM-dd')",
+					"s3_bucket_name": "s3-data-master-bucket",
+					"dataset_names": [
+						"patients",
+						"hospitals",
+						"doctors",
+						"diseases",
+						"attendance"
+					]
+				}
+			}
+		],
+		"type": "ScheduleTrigger",
+		"typeProperties": {
+			"recurrence": {
+				"frequency": "Month",
+				"interval": 1,
+				"startTime": "2026-06-05T18:32:00",
+				"timeZone": "E. South America Standard Time",
+				"schedule": {
+					"hours": [
+						7
+					],
+					"monthDays": [
+						5
+					]
+				}
+			}
+		}
+	}
+}
