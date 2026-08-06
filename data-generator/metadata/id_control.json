@@ -1,8 +1,8 @@
 {
-    "patient_id": 55000,
-    "doctor_id": 612,
-    "hospital_id": 55,
-    "disease_id": 32,
-    "attendance_id": 201000,
-    "event_id": 109
+    "patient_id": 0,
+    "doctor_id": 0,
+    "hospital_id": 0,
+    "disease_id": 0,
+    "attendance_id": 0,
+    "event_id": 0
 }

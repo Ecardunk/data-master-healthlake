@@ -7,11 +7,11 @@ OUTPUT_DIR_STREAMING = BASE_DIR / "output" / "streaming"
 METADATA_FILE = BASE_DIR / "metadata" / "id_control.json"
 
 RECORD_COUNTS = {
-    "patients": 5000,
-    "hospitals": 5,
-    "doctors": 12,
-    "diseases": 2,
-    "attendance": 1000
+    "patients": 50000,
+    "hospitals": 10,
+    "doctors": 600,
+    "diseases": 7,
+    "attendance": 150000
 }
 
 DATASET_PROFILES = {
