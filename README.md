@@ -563,7 +563,7 @@ Dados de saúde são dados pessoais sensíveis segundo a Lei nº 13.709/2018. Es
 | Notificação por e-mail | Jobs DQX | Alerta de falha do gate |
 | Dashboard AI/BI | SQL Warehouse | Resultados DQ por tabela/estágio, linhas em quarentena e consultas de execuções |
 
-O dashboard versionado usa um `workspace_id` de desenvolvimento na consulta. Esse valor precisa ser parametrizado para produção. Além disso, a consulta usa `result_state = 'SUCCESS'`, enquanto a system table registra sucesso como `SUCCEEDED`, e não exclui versões atuais de jobs removidos por `delete_time IS NULL`; até a correção, o bloco de últimas execuções bem-sucedidas pode ficar vazio ou incorreto. Os contadores DQ representam resultados por tabela e estágio em `dq_run_metrics`, não gates completos. O painel ainda não mede freshness ponta a ponta, atraso S3/ADF/Auto Loader, throughput do Event Hubs, custo, SLA/SLO ou reconciliação de contagens entre as camadas.
+O dashboard seleciona o `workspace_id` de dev ou prod a partir do catálogo corrente, considera somente versões atuais de jobs (`delete_time IS NULL`) e usa o estado `SUCCEEDED` registrado pela system table. Os contadores DQ representam resultados por tabela e estágio em `dq_run_metrics`, não gates completos. O painel ainda não mede freshness ponta a ponta, atraso S3/ADF/Auto Loader, throughput do Event Hubs, custo, SLA/SLO ou reconciliação de contagens entre as camadas.
 
 ### 3.14 **Escalabilidade**
 
@@ -593,7 +593,7 @@ O case ainda não comprova capacidade de grande volume por teste de carga. O DQX
 | --- | --- | --- |
 | `ci.yml` | Push/PR em `develop` ou `main` | Python 3.11, dependências, pytest, compileall e `bundle validate` dev |
 | `deploy-dev.yml` | Push em `develop` com mudança em `databricks/**` ou `.github/workflows/**`, ou execução manual | Valida e faz deploy do target `dev` |
-| `deploy-prod.yml` | Execução manual com `ref` | Checkout do ref, valida e faz deploy do target `prod` |
+| `deploy-prod.yml` | Execução manual em `main` com `odate` | Checkout do SHA do workflow, valida, planeja, faz deploy do target `prod` e executa o refresh |
 
 Os deploys usam OAuth M2M e GitHub Environments. Configure:
 
@@ -602,11 +602,10 @@ Os deploys usam OAuth M2M e GitHub Environments. Configure:
 | `DATABRICKS_HOST` | Variable | Development e production |
 | `DATABRICKS_CLIENT_ID` | Variable | Development e production |
 | `DATABRICKS_CLIENT_SECRET` | Secret | Development e production |
-| `DATABRICKS_RAW_ROOT` | Variable | Production |
 
-O Environment `production` deve exigir reviewers e restringir branches/tags. O workflow atual aceita qualquer ref informado e o action `databricks/setup-cli@main` é mutável; recomenda-se restringir o ref e fixar actions por versão ou commit.
+O Environment `production` deve exigir reviewers e restringir branches/tags. O workflow também rejeita refs diferentes de `main`, faz checkout do SHA do próprio run e fixa as actions por commit. A Raw é versionada no Bundle como `abfss://raw@sthealthdatalake001.dfs.core.windows.net`; o catálogo `healthlake_prod` mantém seus dados gerenciados em `sthlkprodbrs01`.
 
-O CI/CD atual executa os testes versionados do gerador, mas não provisiona cloud, não publica os artefatos ADF, não executa `unity_catalog_access.sql`, não roda o refresh após deploy e não faz smoke test end-to-end no workspace.
+O CI/CD atual executa os testes versionados do gerador e o refresh produtivo após o deploy, mas não provisiona cloud, não publica os artefatos ADF, não executa `unity_catalog_access.sql` e não faz smoke test end-to-end independente no workspace.
 
 ---
 
@@ -689,7 +688,7 @@ Antes do Bundle:
 4. Crie/sincronize os grupos de conta.
 5. Revise os nomes de catálogo no SQL e execute [`unity_catalog_access.sql`](databricks/src/governance/unity_catalog_access.sql) com uma identidade autorizada.
 6. Troque o e-mail default de alerta `dq_alert_email`.
-7. Parametrize o `workspace_id` do dashboard para cada ambiente.
+7. Confirme os `workspace_id` de dev/prod usados pelo dashboard.
 8. Revise `raw_root`, host e nomes de storage em [`databricks.yml`](databricks/databricks.yml).
 
 Autenticação local de desenvolvimento:
@@ -829,11 +828,11 @@ Sem `--send-eventhub`, o JSONL é gerado localmente. Com a opção, o envio term
 
 ### 4.12 Deploy de produção
 
-1. Proteja o GitHub Environment `production` com reviewers e branches permitidas.
-2. Configure variables/secrets de produção.
-3. Execute manualmente o workflow `Deploy production`.
-4. Informe somente um commit/ref revisado.
-5. Após o deploy, execute smoke tests e o refresh de forma controlada; essas ações ainda não fazem parte do workflow.
+1. Proteja o GitHub Environment `production` com reviewers e permita somente `main`.
+2. Configure `DATABRICKS_HOST`, `DATABRICKS_CLIENT_ID` e `DATABRICKS_CLIENT_SECRET` no Environment.
+3. Confirme que os cinco arquivos da mesma `odate` existem na Raw de `sthealthdatalake001`.
+4. Execute manualmente o workflow `Deploy production` em `main` e informe a `odate` no formato `YYYY-MM-DD`.
+5. Acompanhe no mesmo run as etapas validate, plan, deploy e `healthlake_medallion_refresh`; depois execute os smoke tests funcionais.
 
 ### 4.13 Roteiro de demonstração
 
@@ -876,7 +875,7 @@ Não publique chaves, connection strings, nomes de pessoas reais ou identificado
 | Bundle não autentica | Revise host/profile ou variables/secrets OAuth M2M |
 | Gate DQX falha | Confirme o `--params "odate=YYYY-MM-DD"`, consulte `dq_run_metrics` para essa data e a tabela de quarentena com sufixo `_v2` |
 | Silver vazia | Confirme que as cinco Bronze têm linhas na `odate` solicitada e que `dq_promotion_control` aprovou `bronze_to_silver`; linhas legadas com `odate` nula exigem nova partição imutável ou full refresh controlado |
-| Dashboard sem jobs | Parametrize `workspace_id`, conceda acesso às system tables e troque `result_state = 'SUCCESS'` por `SUCCEEDED`; filtre a versão atual não removida com `delete_time IS NULL` |
+| Dashboard sem jobs | Confirme o catálogo corrente, o `workspace_id` mapeado e o acesso às system tables; a consulta considera apenas `SUCCEEDED` e versões atuais não removidas |
 | Testes do gerador falham | Execute `python -m pytest data-generator/tests -q` e revise o contrato dos perfis `clean`/`chaos` |
 
 ---
@@ -909,9 +908,8 @@ Não publique chaves, connection strings, nomes de pessoas reais ou identificado
 | P1 | ADF e Databricks não estão encadeados | Operação manual, risco de partição parcial | Criar trigger/orquestrador e manifest de conclusão |
 | P1 | Infra cloud e governança-base não são IaC | **Reprodutibilidade da Arquitetura** incompleta | Adicionar Terraform/Bicep para AWS/Azure/Databricks e migrations de grants |
 | P1 | Streaming termina no Event Hubs | Não há análise em tempo real | Criar consumer Lakeflow, checkpoint, Bronze/Silver streaming e Gold temporal |
-| P2 | Dashboard fixa workspace de dev | Deploy prod consulta o workspace errado | Parametrizar workspace/catalog/schema por target |
-| P2 | Consulta de jobs filtra `SUCCESS` e não exclui jobs apagados | Painel pode omitir sucessos ou exibir versão lógica incorreta | Usar `SUCCEEDED`, selecionar o registro SCD2 atual e exigir `delete_time IS NULL` |
-| P2 | Action de instalação da CLI usa referência mutável | O DQX está fixado em `0.15.0`, mas `databricks/setup-cli@main` ainda pode mudar sem alteração no repositório | Fixar a action por versão/commit e automatizar atualização controlada |
+| P2 | Dashboard mapeia IDs físicos por catálogo | Recriar um workspace exige atualizar o JSON versionado | Automatizar a descoberta controlada de `workspace_id` por ambiente |
+| P2 | Actions fixadas por SHA exigem manutenção | O pin evita mudanças não revisadas, mas também não recebe correções automaticamente | Automatizar PRs controlados de atualização das actions |
 | P2 | PII integral permanece em Raw/Bronze | Acesso de engenharia aumenta superfície de risco | Reforçar least privilege, auditoria, retenção, tokenização e ambientes isolados |
 | P2 | Sem métricas de freshness, custo e reconciliação | Falhas silenciosas entre serviços | Adicionar SLOs, alertas e contagens/checksums por etapa |
 | P2 | `event_id` só avança após todo o envio | Falha após batches parciais pode reutilizar IDs na nova tentativa | Persistir progresso por batch e tornar produtor/consumidor idempotentes |

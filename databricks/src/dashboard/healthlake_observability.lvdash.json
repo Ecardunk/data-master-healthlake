@@ -3,7 +3,7 @@
     {
       "displayName": "Latest successful HealthLake jobs",
       "name": "a1b2c3d4",
-      "query": "WITH current_jobs AS (\n  SELECT workspace_id, job_id, name,\n         ROW_NUMBER() OVER (PARTITION BY workspace_id, job_id ORDER BY change_time DESC) AS rn\n  FROM system.lakeflow.jobs\n  WHERE workspace_id = '7405611974072786'\n), latest_success AS (\n  SELECT workspace_id, job_id, MAX(period_end_time) AS last_success_at\n  FROM system.lakeflow.job_run_timeline\n  WHERE result_state = 'SUCCESS'\n  GROUP BY workspace_id, job_id\n)\nSELECT j.name AS job_name, s.last_success_at\nFROM current_jobs j\nJOIN latest_success s USING (workspace_id, job_id)\nWHERE j.rn = 1 AND j.name LIKE '%healthlake%'\nORDER BY s.last_success_at DESC"
+      "query": "WITH current_jobs AS (\n  SELECT workspace_id, job_id, name, delete_time\n  FROM system.lakeflow.jobs\n  WHERE workspace_id = CASE current_catalog()\n    WHEN 'healthlake_dev' THEN '7405611974072786'\n    WHEN 'healthlake_prod' THEN '7405616424934600'\n  END\n  QUALIFY ROW_NUMBER() OVER (PARTITION BY workspace_id, job_id ORDER BY change_time DESC) = 1\n), latest_success AS (\n  SELECT workspace_id, job_id, MAX(period_end_time) AS last_success_at\n  FROM system.lakeflow.job_run_timeline\n  WHERE result_state = 'SUCCEEDED'\n  GROUP BY workspace_id, job_id\n)\nSELECT j.name AS job_name, s.last_success_at\nFROM current_jobs j\nJOIN latest_success s USING (workspace_id, job_id)\nWHERE j.delete_time IS NULL AND j.name LIKE '%healthlake%'\nORDER BY s.last_success_at DESC"
     },
     {
       "displayName": "DQ results",

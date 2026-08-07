@@ -4,6 +4,7 @@ resources:
       name: healthlake-medallion-refresh-${bundle.target}
       description: Refreshes the HealthLake Bronze, Silver, and Gold pipelines in dependency order.
       max_concurrent_runs: 1
+      timeout_seconds: 10800
       queue:
         enabled: true
       parameters:
