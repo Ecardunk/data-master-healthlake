@@ -1,0 +1,31 @@
+bundle:
+  name: healthlake_medallion
+  databricks_cli_version: ">= 1.9.0"
+
+include:
+  - resources/*.yml
+
+variables:
+  catalog:
+    description: Unity Catalog that owns all HealthLake tables.
+    default: healthlake_dev
+  raw_root:
+    description: Governed ADLS landing path registered by ext_healthlake_dev_raw.
+    default: abfss://raw@sthealthdatalake001.dfs.core.windows.net
+  dq_alert_email:
+    description: Recipient notified when a DQX quality gate quarantines data.
+    default: cardosoestevo@yahoo.com.br
+
+targets:
+  dev:
+    default: true
+    mode: development
+    workspace:
+      host: https://adb-7405611974072786.6.azuredatabricks.net
+  prod:
+    mode: production
+    workspace:
+      # Resolves to the CI Service Principal's private bundle directory.
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      catalog: healthlake_prod

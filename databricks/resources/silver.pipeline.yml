@@ -1,0 +1,15 @@
+resources:
+  pipelines:
+    healthlake_silver:
+      name: healthlake-silver-${bundle.target}
+      catalog: ${var.catalog}
+      schema: silver
+      serverless: true
+      continuous: false
+      channel: CURRENT
+      edition: ADVANCED
+      configuration:
+        healthlake.catalog: ${var.catalog}
+      libraries:
+        - glob:
+            include: ../src/silver/**

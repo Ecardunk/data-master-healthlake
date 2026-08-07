@@ -1,0 +1,11 @@
+{
+	"name": "ls_adls_healthlake",
+	"type": "Microsoft.DataFactory/factories/linkedservices",
+	"properties": {
+		"annotations": [],
+		"type": "AzureBlobFS",
+		"typeProperties": {
+			"url": "https://sthealthdatalake001.dfs.core.windows.net/"
+		}
+	}
+}

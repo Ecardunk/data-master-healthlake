@@ -1,0 +1,15 @@
+resources:
+  pipelines:
+    healthlake_gold:
+      name: healthlake-gold-${bundle.target}
+      catalog: ${var.catalog}
+      schema: gold
+      serverless: true
+      continuous: false
+      channel: CURRENT
+      edition: ADVANCED
+      configuration:
+        healthlake.catalog: ${var.catalog}
+      libraries:
+        - glob:
+            include: ../src/gold/**

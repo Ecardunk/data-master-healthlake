@@ -1,0 +1,45 @@
+resources:
+  jobs:
+    healthlake_medallion_refresh:
+      name: healthlake-medallion-refresh-${bundle.target}
+      description: Refreshes the HealthLake Bronze, Silver, and Gold pipelines in dependency order.
+      max_concurrent_runs: 1
+      timeout_seconds: 10800
+      queue:
+        enabled: true
+      parameters:
+        - name: odate
+          default: ''
+      tasks:
+        - task_key: refresh_bronze
+          description: Incrementally ingest new ADLS raw CSV files into Bronze.
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.healthlake_bronze.id}
+        - task_key: dq_bronze_to_silver
+          description: Stop the flow and quarantine Bronze records rejected by DQX before Silver.
+          depends_on:
+            - task_key: refresh_bronze
+          run_job_task:
+            job_id: ${resources.jobs.healthlake_bronze_to_silver_dq.id}
+            job_parameters:
+              odate: '{{job.parameters.odate}}'
+        - task_key: refresh_silver
+          description: Build masked and typed current snapshots only after the Bronze DQX gate succeeds.
+          depends_on:
+            - task_key: dq_bronze_to_silver
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.healthlake_silver.id}
+        - task_key: dq_silver_to_gold
+          description: Stop the flow and quarantine Silver records rejected by DQX before Gold.
+          depends_on:
+            - task_key: refresh_silver
+          run_job_task:
+            job_id: ${resources.jobs.healthlake_silver_to_gold_dq.id}
+            job_parameters:
+              odate: '{{job.parameters.odate}}'
+        - task_key: refresh_gold
+          description: Publish analytics marts only after the Silver DQX gate succeeds.
+          depends_on:
+            - task_key: dq_silver_to_gold
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.healthlake_gold.id}

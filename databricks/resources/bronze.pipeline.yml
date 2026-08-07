@@ -1,0 +1,16 @@
+resources:
+  pipelines:
+    healthlake_bronze:
+      name: healthlake-bronze-${bundle.target}
+      catalog: ${var.catalog}
+      schema: bronze
+      serverless: true
+      continuous: false
+      channel: CURRENT
+      edition: ADVANCED
+      configuration:
+        healthlake.catalog: ${var.catalog}
+        healthlake.raw_root: ${var.raw_root}
+      libraries:
+        - glob:
+            include: ../src/bronze/**

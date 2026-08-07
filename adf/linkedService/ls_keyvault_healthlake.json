@@ -1,0 +1,11 @@
+{
+	"name": "ls_keyvault_healthlake",
+	"type": "Microsoft.DataFactory/factories/linkedservices",
+	"properties": {
+		"annotations": [],
+		"type": "AzureKeyVault",
+		"typeProperties": {
+			"baseUrl": "https://kv-data-master-case.vault.azure.net/"
+		}
+	}
+}
