@@ -66,11 +66,11 @@ A tabela `kpi_hospital_daily` permite responder, por hospital e dia:
 | Capacidade | Estado no repositório | Observação |
 | --- | --- | --- |
 | Fluxo batch local -> S3 -> ADLS | Componentes versionados | Upload e ADF são disparados separadamente; recursos cloud precisam existir |
-| Raw -> Bronze -> Silver -> Gold | Componentes versionados | Há bloqueios conhecidos de `odate`, bootstrap e escopo do gate de unicidade |
+| Raw -> Bronze -> Silver -> Gold | Componentes versionados | Regex de `odate`, gate por partição e promoção fail-closed implementados; o bootstrap e a infraestrutura cloud ainda exigem preparação |
 | Streaming | Parcial | Gera JSONL e envia ao Event Hubs; não há consumidor downstream |
-| Qualidade e quarentena | Versionado | O perfil padrão injeta falhas de propósito e o gate opera em modo fail-closed |
+| Qualidade e quarentena | Versionado | `clean` permite a trilha de aprovação; `chaos` continua como default para demonstrar quarentena; os gates operam em modo fail-closed |
 | Governança | Política versionada | O SQL de grants precisa ser aplicado manualmente |
-| CI/CD | Parcial | Faz validate/deploy do Databricks; o diretório de testes esperado pela CI não existe |
+| CI/CD | Parcial | Executa testes do gerador e validate/deploy do Databricks; ainda não há smoke test cloud end-to-end |
 | Infraestrutura como código | Parcial | O Bundle cobre recursos do workspace Databricks, não S3, ADF, ADLS, Key Vault ou Event Hubs |
 
 ---
@@ -177,9 +177,9 @@ O repositório declara a factory e sua managed identity, os artefatos ADF, o Bun
 | 2. Landing AWS | Partição CSV local | `boto3.upload_file` envia os cinco datasets | `s3://<bucket>/raw/<dataset>/odate=<data>/<dataset>.csv` |
 | 3. ADF | Parâmetros `odate`, bucket e datasets | `ForEach` paralelo verifica `exists`; `Copy` preserva hierarquia | `abfss://raw@<storage>/<dataset>/odate=<data>/<dataset>.csv` |
 | 4. Bronze | CSVs no ADLS | Auto Loader faz leitura incremental e adiciona metadados | Cinco tabelas Delta Bronze |
-| 5. Gate 1 | Tabelas Bronze | DQX separa válidos e inválidos | Métricas, quarentena e bloqueio em caso de erro |
+| 5. Gate 1 | Uma `odate` das tabelas Bronze | Filtra a partição, limpa/deduplica/tipa e então aplica DQX | Métricas, quarentena `_v2`, aprovação conjunta das cinco tabelas ou bloqueio total |
 | 6. Silver | Bronze aprovada | Snapshot atual, deduplicação, tipagem, padronização e máscaras | Cinco materialized views Silver |
-| 7. Gate 2 | Views Silver | Revalidação antes do produto analítico | Métricas, quarentena e bloqueio em caso de erro |
+| 7. Gate 2 | Uma `odate` das views Silver | Revalidação tipada antes do produto analítico | Métricas, quarentena `_v2`, aprovação conjunta ou bloqueio total |
 | 8. Gold | Silver aprovada | Modelagem dimensional e agregação diária | Quatro dimensões, um fato e um KPI |
 | 9. Consumo | Gold e métricas DQ | SQL Warehouse e dashboard AI/BI | Consultas analíticas e painel operacional |
 
@@ -193,7 +193,7 @@ O repositório declara a factory e sua managed identity, os artefatos ADF, o Bun
 | ADLS Gen2 | Zona Raw | Armazenamento de objetos escalável, hierárquico e integrado ao Azure | RBAC, ACLs, rede e lifecycle precisam ser configurados fora deste repositório |
 | Azure Databricks | Processamento distribuído | Spark, Lakeflow, Delta Lake, Jobs, SQL e governança na mesma plataforma | Custo e dependência do workspace; requer Unity Catalog preparado |
 | Delta Lake | Bronze, Silver e Gold | Transações ACID, schema enforcement e histórico transacional | Exige governança de retenção, otimização e custos de storage/compute |
-| DQX | Gates de qualidade | Regras declarativas, split entre válidos/inválidos e quarentena | Projeto Databricks Labs, sem SLA formal; a versão não está fixada no Bundle |
+| DQX | Gates de qualidade | Regras declarativas, split entre válidos/inválidos e quarentena | Projeto Databricks Labs, sem SLA formal; a dependência está fixada em `0.15.0` para builds reprodutíveis |
 | Unity Catalog | Governança | Controle hierárquico por catálogo/schema, grupos e privilégios mínimos | Grupos, storage credentials e grants não são provisionados pelo Bundle atual |
 | Declarative Automation Bundles | Recursos Databricks como código | Versiona pipelines, jobs, warehouse e dashboard por ambiente | Não provisiona toda a fundação AWS/Azure do case |
 | Azure Event Hubs | Demonstração streaming | Serviço particionado e compatível com produção em lotes de eventos | Falta o consumidor, checkpoint e produto analítico contínuo |
@@ -255,7 +255,7 @@ erDiagram
     }
 ```
 
-As relações representam o desenho lógico; PKs e FKs não são declaradas nem impostas no storage atual. A ausência de validação de integridade referencial é registrada nas limitações.
+As relações representam o desenho lógico; PKs e FKs não são declaradas nem impostas no storage atual. O perfil `clean` reconcilia referências básicas dos dados gerados, mas o gate DQ ainda não executa anti-joins entre todas as tabelas para impor integridade referencial sobre qualquer fonte externa; essa lacuna permanece nas limitações.
 
 ### 2.7 Organização do repositório
 
@@ -273,7 +273,8 @@ As relações representam o desenho lógico; PKs e FKs não são declaradas nem 
 |   |-- ingestion-s3/         # Uploader boto3
 |   |-- metadata/             # Controle incremental de IDs
 |   |-- producers/            # Produtor Event Hubs
-|   `-- utils/                # Snapshot, churn, arquivos e anomalias
+|   |-- tests/                # Contratos dos perfis clean/chaos
+|   `-- utils/                # Snapshot, churn, saneamento, arquivos e anomalias
 |-- databricks/
 |   |-- resources/            # Pipelines, Jobs, DQ, warehouse e dashboard
 |   |-- src/bronze/           # Auto Loader
@@ -324,10 +325,11 @@ O ponto de entrada é [`data-generator/main.py`](data-generator/main.py). Em mod
 1. O gerador procura a partição anterior mais recente.
 2. Remove aleatoriamente uma fração configurada de registros para simular churn.
 3. Gera novos IDs a partir de [`id_control.json`](data-generator/metadata/id_control.json).
-4. Injeta nulos e duplicatas segundo [`settings.py`](data-generator/config/settings.py).
+4. No perfil default `chaos`, injeta nulos e duplicatas segundo [`settings.py`](data-generator/config/settings.py); no perfil `clean`, não injeta novas anomalias.
 5. Concatena registros retidos e novos.
-6. Grava cada CSV por arquivo temporário e rename, reduzindo o risco de arquivo individual incompleto.
-7. Avança o controle de IDs somente depois de salvar todos os snapshots.
+6. Em `clean`, saneia também os registros retidos: preserva o contrato de colunas, normaliza campos, remove obrigatórios inválidos, deduplica chaves e reconcilia as referências de atendimentos com as dimensões presentes.
+7. Grava cada CSV por arquivo temporário e rename, reduzindo o risco de arquivo individual incompleto.
+8. Avança o controle de IDs somente depois de salvar todos os snapshots.
 
 Configuração versionada de novos registros por execução:
 
@@ -339,7 +341,7 @@ Configuração versionada de novos registros por execução:
 | Doenças | 0 |
 | Atendimentos | 2.500 |
 
-A seed configura os geradores pseudoaleatórios (PRNGs) de `random`, NumPy e Faker. Isso melhora a repetibilidade, mas não garante sozinho uma reprodução byte a byte: o resultado também depende da versão das bibliotecas, do relógio usado por `end_date="now"`, do estado de IDs e dos snapshots anteriores. A própria documentação do Faker restringe a garantia à mesma versão. A opção `--overwrite` substitui arquivos da partição, mas também gera novos dados e avança novamente os IDs; ela não funciona como replay idempotente. Como o mesmo caminho é reutilizado e o Auto Loader não habilita `cloudFiles.allowOverwrites`, essa sobrescrita normalmente também não atualiza a Bronze depois que o arquivo já foi descoberto.
+A CLI aceita `--profile clean|chaos`. Use `clean` para uma execução destinada à Gold e uma `odate` separada com `chaos` para demonstrar o bloqueio. A seed configura os geradores pseudoaleatórios (PRNGs) de `random`, NumPy e Faker. Isso melhora a repetibilidade, mas não garante sozinho uma reprodução byte a byte: o resultado também depende da versão das bibliotecas, do relógio usado por `end_date="now"`, do estado de IDs e dos snapshots anteriores. A própria documentação do Faker restringe a garantia à mesma versão. A opção `--overwrite` substitui arquivos da partição, mas também gera novos dados e avança novamente os IDs; ela não funciona como replay idempotente. Como o mesmo caminho é reutilizado e o Auto Loader não habilita `cloudFiles.allowOverwrites`, essa sobrescrita normalmente também não atualiza a Bronze depois que o arquivo já foi descoberto.
 
 No modo de eventos, o gerador cria um JSON por linha com sinais vitais e pode enviá-lo ao Event Hubs. O produtor respeita o tamanho máximo do lote: quando um evento não cabe, envia o lote atual e inicia outro.
 
@@ -376,7 +378,13 @@ Para cada dataset, o ADF:
 
 As chaves do S3 são referenciadas pelos secrets `aws-s3-access-key-id` e `aws-s3-secret-access-key` no Azure Key Vault. O repositório não armazena seus valores.
 
-O pipeline está anotado como `manual`, não possui trigger e não inicia o Job Databricks. A passagem ADF -> Databricks exige intervenção do operador.
+O pipeline mantém a anotação histórica `manual`, mas o repositório contém o
+artefato `adf/trigger/trigger_case.json`, que declara uma cópia mensal no dia 05
+e deriva a `odate` do horário agendado no fuso de São Paulo. Os workflows atuais
+não publicam `adf/**` e a factory de desenvolvimento auditada não possui trigger
+implantado. Além disso, o artefato local ainda não inicia o Job Databricks;
+portanto, a passagem ADF -> Databricks continua exigindo uma ação separada do
+operador.
 
 ### 3.4 **Ingestão de Dados** streaming
 
@@ -408,10 +416,11 @@ Essa zona permite auditoria e reprocessamento somente enquanto os objetos origin
 - usa `schemaEvolutionMode = rescue`;
 - envia incompatibilidades para `_rescued_data`;
 - registra `_source_file` e `_ingested_at`;
-- tenta extrair `odate` do caminho;
-- elimina registros sem a chave principal por `expect_or_drop`.
+- extrai `odate` do segmento completo `odate=YYYY-MM-DD` com regex validado;
+- usa `expect_or_fail` para interromper a atualização inteira quando o path não fornece uma `odate` válida;
+- monitora chaves ausentes com expectations sem descartar silenciosamente a linha antes da limpeza e do DQ.
 
-| Tabela Bronze | Origem Raw | Chave exigida |
+| Tabela Bronze | Origem Raw | Chave monitorada |
 | --- | --- | --- |
 | `bronze.patients` | `raw/patients` | `patient_id` |
 | `bronze.hospitals` | `raw/hospitals` | `hospital_id` |
@@ -423,7 +432,7 @@ O Auto Loader mantém estado de ingestão e evita reler arquivos já processados
 
 ### 3.7 Gate de qualidade Bronze -> Silver
 
-O Job DQX lê cada tabela Bronze, aplica regras, divide linhas válidas e inválidas, mascara PII de pacientes na quarentena e grava métricas em `<catalog>.observability.dq_run_metrics`.
+O Job DQX recebe uma `odate` explícita, filtra somente essa partição em cada tabela Bronze e falha se qualquer uma das cinco entidades não tiver linhas. Antes de aplicar regras, ele usa as mesmas transformações puras da Silver para deduplicar, tipar, normalizar e mascarar os dados. Essa limpeza também remove registros incompletos em campos não-chave antes do DQ; a reconciliação fica registrada como `removed_by_cleaning = input_rows - checked_rows` dentro de `violation_summary`. Só então o DQX divide linhas válidas e inválidas, mascara PII de pacientes na quarentena `_v2` e grava métricas em `<catalog>.observability.dq_run_metrics`. O sufixo `_v2` separa o schema tipado pós-limpeza das quarentenas raw legadas, incompatíveis para `mergeSchema`.
 
 | Entidade | Regras principais |
 | --- | --- |
@@ -433,11 +442,11 @@ O Job DQX lê cada tabela Bronze, aplica regras, divide linhas válidas e invál
 | Doenças | ID presente/único, severidade entre 1 e 5 |
 | Atendimentos | ID e FKs presentes, data não futura, espera 0-300, custo não negativo, severidade 1-5, alta 0/1 |
 
-Qualquer linha inválida gera status `FAILED`, persiste a quarentena e lança erro para impedir a Silver. Esse comportamento fail-closed privilegia proteção do produto analítico, mas requer um perfil de dados limpo para a demonstração de sucesso e um perfil separado de chaos/data quality para demonstrar quarentena.
+Depois da limpeza, qualquer violação restante gera status `FAILED`, persiste a quarentena e lança erro para impedir a Silver; nenhuma fração válida da tabela é promovida. O split válido nunca é salvo diretamente. Somente quando as cinco tabelas passam o Job atualiza `<catalog>.observability.dq_promotion_control`; esse é o único sinal consumido pela Silver. Assim, as cinco tabelas são promovidas juntas ou nenhuma é atualizada. O perfil `clean` sustenta o caminho de sucesso, enquanto `chaos` demonstra deliberadamente quarentena e bloqueio.
 
 ### 3.8 Camada Silver
 
-[`transforms.py`](databricks/src/silver/transforms.py) trata cada `odate` como snapshot completo. O maior `odate` é escolhido como estado atual e cada chave é deduplicada pelo registro mais recente. Depois são aplicadas conversões de tipo e padronizações.
+[`transforms.py`](databricks/src/silver/transforms.py) trata cada `odate` como snapshot completo e lê apenas a data aprovada para `bronze_to_silver` em `dq_promotion_control`. O módulo compartilhado [`cleaning.py`](databricks/src/silver/cleaning.py) repete deterministicamente a mesma deduplicação, tipagem e normalização validadas pelo gate. Expectations `expect_or_fail` interrompem a materialização inteira se o contrato de qualquer view for violado.
 
 | View Silver | Transformações relevantes |
 | --- | --- |
@@ -464,7 +473,7 @@ A Gold exclui nome, CPF, e-mail e telefone da dimensão de pacientes. Ainda assi
 
 ### 3.10 Gate de qualidade Silver -> Gold
 
-O segundo gate repete verificações essenciais sobre as views tipadas:
+O segundo gate filtra as views tipadas pela mesma `odate` recebida pelo Job e repete verificações essenciais:
 
 - chaves presentes e únicas;
 - `snapshot_date` presente para pacientes;
@@ -474,7 +483,7 @@ O segundo gate repete verificações essenciais sobre as views tipadas:
 - custo não negativo;
 - severidade dentro do domínio.
 
-Apenas depois de aprovação o Job executa a Gold.
+Apenas quando as cinco views passam o controle de promoção de `silver_to_gold` é atualizado e o Job executa a Gold. A fact usa `expect_or_fail` para que uma data de atendimento ausente aborte a atualização inteira, em vez de salvar uma tabela parcialmente filtrada.
 
 ### 3.11 Camada Gold
 
@@ -547,8 +556,9 @@ Dados de saúde são dados pessoais sensíveis segundo a Lei nº 13.709/2018. Es
 | Existência do arquivo | ADF `GetMetadata` | Falha cedo quando a partição S3 está incompleta |
 | Retries e status de cópia | ADF pipeline run | Diagnóstico de ingestão e conectividade |
 | `_source_file`, `_ingested_at`, `snapshot_date` | Bronze/Silver | Rastreabilidade de arquivo e tempo |
-| Expectation metrics | Lakeflow | Contagem de registros descartados/violados |
-| `dq_run_metrics` | DQX | Entrada, válidos, quarentena, status, tabela e run ID |
+| Expectation metrics | Lakeflow | Contagem de violações e falhas transacionais por `expect_or_fail` |
+| `dq_run_metrics` | DQX | `odate`, `input_rows`, `checked_rows`, `removed_by_cleaning` em `violation_summary`, válidos, quarentena, status, tabela e run ID |
+| `dq_promotion_control` | DQX/Silver | Única `odate` aprovada por estágio, atualizada somente depois que as cinco tabelas passam |
 | Tabelas de sistema `system.lakeflow.*` | Databricks | Histórico de jobs e última execução bem-sucedida |
 | Notificação por e-mail | Jobs DQX | Alerta de falha do gate |
 | Dashboard AI/BI | SQL Warehouse | Resultados DQ por tabela/estágio, linhas em quarentena e consultas de execuções |
@@ -575,7 +585,7 @@ Estratégias para crescimento:
 | Event Hubs | Mais partições e consumidores independentes | Mais throughput/processing units e auto-inflate |
 | SQL | Mais clusters concorrentes | Warehouse maior |
 
-O case ainda não comprova capacidade de grande volume por teste de carga. Para escalar, é necessário eliminar leituras repetidas do DQX, evitar janelas globais sobre todo o histórico, validar apenas a partição-alvo, compactar arquivos pequenos e definir metas mensuráveis de volume, latência, custo e disponibilidade.
+O case ainda não comprova capacidade de grande volume por teste de carga. O DQX agora filtra a partição-alvo antes da limpeza e das janelas de unicidade, evitando calcular sobre toda a Bronze histórica. Ainda é necessário medir e reduzir ações Spark repetidas dentro dessa partição, compactar arquivos pequenos e definir metas mensuráveis de volume, latência, custo e disponibilidade.
 
 ### 3.15 CI/CD e ambientes
 
@@ -596,7 +606,7 @@ Os deploys usam OAuth M2M e GitHub Environments. Configure:
 
 O Environment `production` deve exigir reviewers e restringir branches/tags. O workflow atual aceita qualquer ref informado e o action `databricks/setup-cli@main` é mutável; recomenda-se restringir o ref e fixar actions por versão ou commit.
 
-O CI/CD atual não provisiona cloud, não publica os artefatos ADF, não executa `unity_catalog_access.sql`, não roda o refresh após deploy e não faz smoke test. Além disso, `ci.yml` chama `pytest data-generator/tests`, mas esse diretório não está versionado.
+O CI/CD atual executa os testes versionados do gerador, mas não provisiona cloud, não publica os artefatos ADF, não executa `unity_catalog_access.sql`, não roda o refresh após deploy e não faz smoke test end-to-end no workspace.
 
 ---
 
@@ -690,7 +700,7 @@ databricks auth login --host "<workspace-url>" --profile HEALTHLAKE_DEV
 
 ### 4.6 Atenção ao bootstrap de um clone limpo
 
-No estado versionado, `id_control.json` contém IDs avançados, `hospitals` e `diseases` geram zero novos registros, e `data-generator/output/` não é versionado. Portanto, um clone limpo não possui os snapshots-base que justificam esses IDs. Sem snapshot anterior, as entidades de contagem zero podem gerar arquivos sem header/schema; isso pode impedir a inferência da Bronze e ainda produzir FKs órfãs. `sample_data/` também não é usado automaticamente.
+No estado versionado, `id_control.json` contém IDs avançados, `hospitals` e `diseases` geram zero novos registros, e `data-generator/output/` não é versionado. Portanto, um clone limpo não possui os snapshots-base que justificam esses IDs. O perfil `clean` preserva os headers/contratos mesmo para datasets vazios e remove referências órfãs, mas não inventa os registros-base ausentes: sem snapshot anterior, hospitais e doenças continuam vazios e o gate fail-closed reprova a `odate`. `sample_data/` também não é usado automaticamente.
 
 Antes da primeira carga reproduzível, implemente ou execute conscientemente uma destas opções:
 
@@ -698,22 +708,22 @@ Antes da primeira carga reproduzível, implemente ou execute conscientemente uma
 2. Seed controlada: carregar snapshots-base versionados/validados e alinhar o metadata ao maior ID.
 3. Fixture de demonstração: publicar um conjunto pequeno e limpo diretamente no layout S3 esperado.
 
-Para uma execução de sucesso até a Gold, ainda é necessário implementar um perfil `clean`, sem duplicatas e sem nulos em campos obrigatórios. Essa opção não existe na CLI atual. O perfil versionado injeta anomalias deliberadamente e demonstra o caminho de falha/quarentena.
+Depois de preparar uma base coerente, use `--profile clean` para a trilha até a Gold. O perfil saneia inclusive linhas retidas de snapshots anteriores. Use `--profile chaos` em outra `odate` para demonstrar o caminho esperado de falha/quarentena; `chaos` permanece como default por compatibilidade.
 
 > [!CAUTION]
-> A sequência das próximas seções descreve a operação pretendida, mas só chega à Gold depois de corrigir o regex de `odate`, limitar a unicidade DQX ao snapshot, resolver o bootstrap e implementar um perfil limpo. No commit atual, ela permite demonstrar os componentes e o bloqueio fail-closed; não constitui evidência de uma execução end-to-end aprovada.
+> O regex de `odate`, o gate DQ por partição, a limpeza antes das regras e os perfis `clean`/`chaos` já estão implementados. A sequência abaixo representa o caminho operacional no código, mas uma execução real ainda depende do bootstrap coerente, dos recursos/credenciais cloud e de registrar evidência da run no ambiente-alvo.
 
 ### 4.7 Gerar batch
 
 ```powershell
-$odate = "2026-08-06"
-python .\data-generator\main.py --odate $odate --seed 42
+$odate = "2026-07-05"
+python .\data-generator\main.py --odate $odate --seed 42 --profile clean
 ```
 
 Saída esperada:
 
 ```text
-data-generator/output/raw/odate=2026-08-06/
+data-generator/output/raw/odate=2026-07-05/
 |-- patients.csv
 |-- hospitals.csv
 |-- doctors.csv
@@ -722,6 +732,8 @@ data-generator/output/raw/odate=2026-08-06/
 ```
 
 Para outra data, use um novo `odate`. Prefira um path/`odate` novo por execução. `--overwrite` avança o metadata, não reproduz a partição anterior e, após upload/cópia para o mesmo path, pode não atualizar a Bronze porque `cloudFiles.allowOverwrites` não está habilitado.
+
+Para testar a quarentena, gere `--profile chaos` com uma segunda `odate`; não reutilize o path limpo.
 
 ### 4.8 Enviar a partição ao S3
 
@@ -744,7 +756,7 @@ az datafactory pipeline create-run `
   --resource-group "<resource-group>" `
   --factory-name "<data-factory>" `
   --name "pl_copy_s3_to_adls_raw" `
-  --parameters '{"odate":"2026-08-06","s3_bucket_name":"<bucket>"}'
+  --parameters '{"odate":"2026-07-05","s3_bucket_name":"<bucket>"}'
 ```
 
 Só continue depois que a execução terminar com sucesso e os cinco arquivos estiverem no ADLS Raw.
@@ -756,7 +768,10 @@ Push-Location .\databricks
 
 databricks bundle validate --target dev --profile HEALTHLAKE_DEV
 databricks bundle deploy --target dev --profile HEALTHLAKE_DEV
-databricks bundle run healthlake_medallion_refresh --target dev --profile HEALTHLAKE_DEV
+databricks bundle run healthlake_medallion_refresh `
+  --target dev `
+  --profile HEALTHLAKE_DEV `
+  --params "odate=$odate"
 
 Pop-Location
 ```
@@ -772,10 +787,19 @@ Se um gate falhar, o bloqueio é esperado. Consulte:
 ```sql
 SELECT *
 FROM healthlake_dev.observability.dq_run_metrics
+WHERE odate = DATE '2026-07-05'
 ORDER BY checked_at DESC;
 
-SHOW TABLES IN healthlake_dev.quarantine;
+SELECT *
+FROM healthlake_dev.observability.dq_promotion_control
+ORDER BY dq_stage;
+
+SHOW TABLES IN healthlake_dev.quarantine LIKE '*_v2';
 ```
+
+Em `dq_run_metrics`, `input_rows` é a quantidade filtrada da camada de origem para a `odate` e `checked_rows` é a quantidade efetivamente submetida às regras depois de limpeza e deduplicação. A diferença `removed_by_cleaning = input_rows - checked_rows`, registrada no JSON de `violation_summary`, contabiliza os registros incompletos em campos não-chave removidos antes do DQ. Depois dessa etapa, qualquer violação restante bloqueia o salvamento da tabela inteira; o controle de promoção só muda depois que as cinco entidades passam.
+
+O parâmetro `odate` dos Jobs tem default vazio de propósito. Não existe fallback para a data do relógio: omitir `--params "odate=YYYY-MM-DD"` faz o gate falhar na validação do argumento, evitando processar acidentalmente a partição errada.
 
 Quando os dois gates aprovarem, valide a Gold:
 
@@ -823,19 +847,19 @@ Sem `--send-eventhub`, o JSONL é gerado localmente. Com a opção, o envio term
 | 70-80 min | **Observabilidade**, dashboard e **Escalabilidade** |
 | 80-90 min | Limitações, roadmap e perguntas |
 
-O roteiro ideal usa duas partições: uma limpa para chegar à Gold e uma com anomalias para demonstrar quarentena. No commit atual somente o perfil com anomalias está implementado; não apresente a trilha limpa como concluída antes de implementar e validar a Fase 0.
+O roteiro usa duas partições imutáveis: uma gerada com `--profile clean` para chegar à Gold e outra, com `--profile chaos`, para demonstrar quarentena e bloqueio fail-closed. Os dois perfis estão implementados; registre separadamente a evidência cloud de sucesso e de falha esperada.
 
 ### 4.14 Evidências para a entrega e apresentação
 
-Diagramas e código não substituem evidência de execução. O repositório não versiona capturas ou resultados cloud; depois de eliminar os bloqueios P0, registre pelo menos:
+Diagramas e código não substituem evidência de execução. O repositório não versiona capturas ou resultados cloud; para cada ambiente e `odate`, registre pelo menos:
 
 | Etapa | Evidência mínima | Critério de aceite |
 | --- | --- | --- |
 | Geração | Log do comando, `odate`, seed, contagens e checksums | Cinco CSVs completos no path esperado |
 | S3 | Listagem dos cinco objetos, tamanho e versão/checksum | Partição íntegra antes do ADF |
 | ADF | Run ID e status das cinco cópias | Pipeline `Succeeded`, sem dataset ausente |
-| Bronze | Contagens por `odate`, `_source_file` e descartes de expectations | Linhagem e volume reconciliados com a Raw |
-| DQX | `dq_run_metrics` e amostra da quarentena para perfis clean/chaos | Clean aprovado; chaos bloqueado conforme regra |
+| Bronze | Contagens por `odate`, `_source_file` e violações de expectations | Linhagem e volume reconciliados com a Raw; `odate_present` sem falha |
+| DQX | `dq_run_metrics`, `dq_promotion_control` e amostra da quarentena `_v2` para perfis clean/chaos | `removed_by_cleaning = input_rows - checked_rows` reconciliado; clean aprovado; qualquer violação remanescente no chaos bloqueia a tabela inteira |
 | Silver/Gold | Run ID do Job, contagens e consulta de `kpi_hospital_daily` | Os dois gates aprovados e produtos Gold populados |
 | Dashboard | Captura com horário, workspace e filtros visíveis | Métricas coerentes com a run demonstrada |
 
@@ -850,10 +874,10 @@ Não publique chaves, connection strings, nomes de pessoas reais ou identificado
 | `S3_RAW_FILE_NOT_FOUND` no ADF | Confirme todos os objetos e o layout exato no bucket |
 | Erro de Key Vault | Verifique nomes dos secrets e acesso da managed identity |
 | Bundle não autentica | Revise host/profile ou variables/secrets OAuth M2M |
-| Gate DQX falha | Consulte `dq_run_metrics` e a tabela de quarentena |
-| Silver vazia | Inspecione `bronze.*.odate`; há uma limitação conhecida no regex de extração |
+| Gate DQX falha | Confirme o `--params "odate=YYYY-MM-DD"`, consulte `dq_run_metrics` para essa data e a tabela de quarentena com sufixo `_v2` |
+| Silver vazia | Confirme que as cinco Bronze têm linhas na `odate` solicitada e que `dq_promotion_control` aprovou `bronze_to_silver`; linhas legadas com `odate` nula exigem nova partição imutável ou full refresh controlado |
 | Dashboard sem jobs | Parametrize `workspace_id`, conceda acesso às system tables e troque `result_state = 'SUCCESS'` por `SUCCEEDED`; filtre a versão atual não removida com `delete_time IS NULL` |
-| CI não encontra testes | O diretório `data-generator/tests` ainda precisa ser criado/versionado |
+| Testes do gerador falham | Execute `python -m pytest data-generator/tests -q` e revise o contrato dos perfis `clean`/`chaos` |
 
 ---
 
@@ -866,10 +890,10 @@ Não publique chaves, connection strings, nomes de pessoas reais ou identificado
 | **Armazenamento de Dados** | S3 landing, ADLS Raw, Delta Bronze/Silver/Gold | Implementado nos artefatos; infraestrutura é externa |
 | **Observabilidade** | Runs/retries do ADF, metadados de linhagem, métricas DQX, system tables, e-mail e dashboard | Parcial; falta visão ponta a ponta e SLO/freshness |
 | **Segurança de Dados** | Key Vault, managed identity declarada, OAuth M2M, GitHub Environments e Unity Catalog | Parcial; rede, rotação, auditoria e infraestrutura não estão automatizadas |
-| **Mascaramento de Dados** | Máscaras na Silver/quarentena e remoção de nome, CPF, e-mail e telefone de pacientes da Gold | Versionado como minimização, com correção de regex pendente; Gold ainda contém dados pessoais/quasi-identificadores e não equivale a anonimização |
+| **Mascaramento de Dados** | Máscaras na Silver/quarentena e remoção de nome, CPF, e-mail e telefone de pacientes da Gold | Versionado como minimização; regex de dígitos corrigido; Gold ainda contém dados pessoais/quasi-identificadores e não equivale a anonimização |
 | **Arquitetura de Dados** | Lakehouse Medallion, Spark distribuído, Delta e modelo estrela | Implementada no Bundle |
 | **Escalabilidade** | ADF paralelo, Auto Loader, serverless, filas e Event Hubs em lotes | Mecanismos presentes; sem teste de carga ou dimensionamento comprovado |
-| **Reprodutibilidade da Arquitetura** | Dependências pinadas do gerador, JSON ADF, Bundle e workflows | Parcial; falta bootstrap, IaC cloud, deploy ADF e testes |
+| **Reprodutibilidade da Arquitetura** | Dependências pinadas do gerador, testes de perfis, JSON ADF, Bundle e workflows | Parcial; faltam bootstrap transacional, IaC cloud, deploy ADF e smoke test end-to-end |
 
 ---
 
@@ -879,20 +903,15 @@ Não publique chaves, connection strings, nomes de pessoas reais ou identificado
 
 | Prioridade | Limitação verificada | Impacto | Correção recomendada |
 | --- | --- | --- | --- |
-| P0 | Regex Bronze usa escape duplo em `odate` | Paths normais `odate=YYYY-MM-DD` não são reconhecidos; `odate` fica nulo e a Silver não encontra o snapshot atual | Usar um padrão de dígitos válido e criar teste unitário/integrado |
-| P0 | Unicidade DQX é calculada sobre toda a Bronze histórica | IDs legítimos reaparecem em snapshots e bloqueiam o segundo `odate` | Filtrar o snapshot-alvo ou validar `(odate, id)` |
-| P0 | Perfil padrão gera duplicatas e nulos críticos | Com 2.500 atendimentos e taxa `0,0015`, três duplicatas são injetadas por rodada; a unicidade reprova o gate | Separar perfis `clean` e `chaos`; decidir entre quarentena parcial ou bloqueio total |
-| P0 | Bootstrap depende de snapshots locais ignorados | Clone limpo pode gerar CSVs sem header/schema, impedir a Bronze e criar FKs órfãs | Versionar fixture limpa ou criar comando transacional de bootstrap/reset |
-| P0 | CI chama testes inexistentes | Workflow falha antes de validar o Bundle | Criar testes de gerador, contratos, DQ e transformações |
+| P0 | Bootstrap depende de snapshots locais ignorados | O perfil `clean` preserva headers e elimina FKs órfãs, mas um clone sem registros-base produz dimensões vazias e o gate reprova a `odate` | Versionar fixture limpa ou criar comando transacional de bootstrap/reset |
 | P1 | Sobrescrita reutiliza o path já descoberto | Auto Loader não habilita `cloudFiles.allowOverwrites`; Raw muda, mas Bronze pode não reprocessar | Usar paths imutáveis por execução ou desenhar replay com overwrite, checkpoint e deduplicação |
-| P1 | Não há validação de integridade referencial | FKs presentes podem apontar para dimensões inexistentes | Adicionar anti-joins/regras DQ entre fatos e dimensões |
+| P1 | O gate não impõe integridade referencial cruzada | O perfil `clean` reconcilia os dados gerados, mas uma fonte externa pode trazer FKs presentes que apontam para dimensões inexistentes | Adicionar anti-joins/regras DQ entre fatos e dimensões |
 | P1 | ADF e Databricks não estão encadeados | Operação manual, risco de partição parcial | Criar trigger/orquestrador e manifest de conclusão |
 | P1 | Infra cloud e governança-base não são IaC | **Reprodutibilidade da Arquitetura** incompleta | Adicionar Terraform/Bicep para AWS/Azure/Databricks e migrations de grants |
 | P1 | Streaming termina no Event Hubs | Não há análise em tempo real | Criar consumer Lakeflow, checkpoint, Bronze/Silver streaming e Gold temporal |
-| P1 | Máscaras usam regex com escape duplo | Normalização de dígitos pode não ocorrer como pretendido | Corrigir regex e testar formatos de CPF/telefone |
 | P2 | Dashboard fixa workspace de dev | Deploy prod consulta o workspace errado | Parametrizar workspace/catalog/schema por target |
 | P2 | Consulta de jobs filtra `SUCCESS` e não exclui jobs apagados | Painel pode omitir sucessos ou exibir versão lógica incorreta | Usar `SUCCEEDED`, selecionar o registro SCD2 atual e exigir `delete_time IS NULL` |
-| P2 | DQX e action de CLI não têm versão imutável | Builds podem mudar sem alteração no repositório | Fixar versões/commits e automatizar atualização controlada |
+| P2 | Action de instalação da CLI usa referência mutável | O DQX está fixado em `0.15.0`, mas `databricks/setup-cli@main` ainda pode mudar sem alteração no repositório | Fixar a action por versão/commit e automatizar atualização controlada |
 | P2 | PII integral permanece em Raw/Bronze | Acesso de engenharia aumenta superfície de risco | Reforçar least privilege, auditoria, retenção, tokenização e ambientes isolados |
 | P2 | Sem métricas de freshness, custo e reconciliação | Falhas silenciosas entre serviços | Adicionar SLOs, alertas e contagens/checksums por etapa |
 | P2 | `event_id` só avança após todo o envio | Falha após batches parciais pode reutilizar IDs na nova tentativa | Persistir progresso por batch e tornar produtor/consumidor idempotentes |
@@ -901,12 +920,19 @@ Não publique chaves, connection strings, nomes de pessoas reais ou identificado
 
 #### Fase 0 - Tornar a demonstração determinística
 
-- Corrigir os dois padrões regex.
-- Criar perfil `clean` e perfil `chaos` explícitos.
-- Implementar bootstrap/reset seguro com relógio de referência parametrizado.
-- Ajustar o gate para trabalhar por snapshot.
-- Adicionar testes e fazer o CI passar.
-- Criar uma validação end-to-end com contagens esperadas na Gold.
+Concluído no código:
+
+- regex de `odate` e de normalização de dígitos corrigidos;
+- perfis `clean` e `chaos` explícitos, com testes do gerador;
+- parâmetro obrigatório `odate` propagado aos gates;
+- DQ restrito ao snapshot, com limpeza/deduplicação/tipagem antes das regras;
+- promoção conjunta das cinco tabelas e expectations `expect_or_fail`;
+- DQX fixado em `0.15.0`.
+
+Pendências ainda verdadeiras:
+
+- implementar bootstrap/reset seguro com relógio de referência parametrizado;
+- automatizar uma validação end-to-end cloud com contagens esperadas na Gold.
 
 #### Fase 1 - Automatizar e reproduzir
 
@@ -935,7 +961,7 @@ Não publique chaves, connection strings, nomes de pessoas reais ou identificado
 
 O projeto apresenta uma base coerente para um case de engenharia de dados: fontes sintéticas relacionais, integração multicloud, landing Raw, arquitetura Medallion, Spark/Delta, gates de qualidade, modelagem dimensional, governança por grupos, dashboard e deploy declarativo do Databricks.
 
-O principal mérito arquitetural é separar fidelidade, qualidade e consumo: a Raw preserva os bytes enquanto os objetos não forem sobrescritos; a Bronze infere tipos, mantém os registros aceitos e a linhagem, mas descarta linhas sem chave; a Silver padroniza e minimiza identificadores de pacientes; e a Gold publica produtos orientados a negócio, ainda contendo dados pessoais e quasi-identificadores. O principal ponto de evolução é operacional: o repositório precisa transformar configurações externas e passos manuais em um bootstrap automatizado, testado e idempotente. Até isso acontecer, a documentação trata o streaming, a conformidade e a execução limpa como capacidades parciais, não como garantias.
+O principal mérito arquitetural é separar fidelidade, qualidade e consumo: a Raw preserva os bytes enquanto os objetos não forem sobrescritos; a Bronze infere tipos, exige uma `odate` extraível e mantém linhagem sem descartar silenciosamente chaves inválidas; o gate limpa e valida uma partição antes de aprovar conjuntamente as cinco entidades; a Silver padroniza e minimiza identificadores de pacientes; e a Gold publica produtos orientados a negócio, ainda contendo dados pessoais e quasi-identificadores. O caminho de código para uma execução limpa e fail-closed está implementado. O principal ponto de evolução continua operacional: transformar configurações externas e passos manuais em um bootstrap automatizado, testado e idempotente e em um smoke test cloud reproduzível. Streaming e conformidade permanecem capacidades parciais, não garantias.
 
 ---
 
@@ -993,4 +1019,4 @@ Fontes primárias e oficiais consultadas para fundamentar as escolhas. Acesso em
 
 ---
 
-Projeto acadêmico que documenta decisões, controles e trade-offs de uma arquitetura de engenharia de dados ponta a ponta; a execução integral permanece condicionada às correções P0 registradas acima.
+Projeto acadêmico que documenta decisões, controles e trade-offs de uma arquitetura de engenharia de dados ponta a ponta; a execução integral depende da preparação do bootstrap e da infraestrutura cloud e deve ser comprovada por evidência de run no ambiente-alvo.

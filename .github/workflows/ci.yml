@@ -25,7 +25,7 @@ jobs:
       - name: Install generator dependencies
         run: pip install -r data-generator/requirements.txt pytest
       - name: Run generator tests
-        run: pytest data-generator/tests
+        run: pytest data-generator/tests databricks/tests
       - name: Check Databricks Python syntax
         run: python -m compileall -q databricks/src
 

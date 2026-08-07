@@ -5,6 +5,7 @@ from pyspark.sql import functions as F
 
 
 RAW_ROOT = spark.conf.get("healthlake.raw_root")
+ODATE_PATH_PATTERN = r"(?:^|/)odate=(\d{4}-\d{2}-\d{2})(?:/|$)"
 
 
 def read_raw_csv(dataset_name: str):
@@ -25,9 +26,10 @@ def read_raw_csv(dataset_name: str):
             F.to_date(
                 F.regexp_extract(
                     F.col("_metadata.file_path"),
-                    r"odate=(\\d{4}-\\d{2}-\\d{2})",
+                    ODATE_PATH_PATTERN,
                     1,
-                )
+                ),
+                "yyyy-MM-dd",
             ),
         )
     )
@@ -38,7 +40,8 @@ def read_raw_csv(dataset_name: str):
     comment="Source-aligned patient snapshots incrementally ingested from ADLS raw.",
     table_properties={"quality": "bronze"},
 )
-@dp.expect_or_drop("patient_id_present", "patient_id IS NOT NULL")
+@dp.expect_or_fail("odate_present", "odate IS NOT NULL")
+@dp.expect("patient_id_present", "patient_id IS NOT NULL")
 def patients():
     return read_raw_csv("patients")
 
@@ -48,7 +51,8 @@ def patients():
     comment="Source-aligned hospital snapshots incrementally ingested from ADLS raw.",
     table_properties={"quality": "bronze"},
 )
-@dp.expect_or_drop("hospital_id_present", "hospital_id IS NOT NULL")
+@dp.expect_or_fail("odate_present", "odate IS NOT NULL")
+@dp.expect("hospital_id_present", "hospital_id IS NOT NULL")
 def hospitals():
     return read_raw_csv("hospitals")
 
@@ -58,7 +62,8 @@ def hospitals():
     comment="Source-aligned doctor snapshots incrementally ingested from ADLS raw.",
     table_properties={"quality": "bronze"},
 )
-@dp.expect_or_drop("doctor_id_present", "doctor_id IS NOT NULL")
+@dp.expect_or_fail("odate_present", "odate IS NOT NULL")
+@dp.expect("doctor_id_present", "doctor_id IS NOT NULL")
 def doctors():
     return read_raw_csv("doctors")
 
@@ -68,7 +73,8 @@ def doctors():
     comment="Source-aligned disease snapshots incrementally ingested from ADLS raw.",
     table_properties={"quality": "bronze"},
 )
-@dp.expect_or_drop("disease_id_present", "disease_id IS NOT NULL")
+@dp.expect_or_fail("odate_present", "odate IS NOT NULL")
+@dp.expect("disease_id_present", "disease_id IS NOT NULL")
 def diseases():
     return read_raw_csv("diseases")
 
@@ -78,6 +84,7 @@ def diseases():
     comment="Source-aligned attendance snapshots incrementally ingested from ADLS raw.",
     table_properties={"quality": "bronze"},
 )
-@dp.expect_or_drop("attendance_id_present", "attendance_id IS NOT NULL")
+@dp.expect_or_fail("odate_present", "odate IS NOT NULL")
+@dp.expect("attendance_id_present", "attendance_id IS NOT NULL")
 def attendance():
     return read_raw_csv("attendance")

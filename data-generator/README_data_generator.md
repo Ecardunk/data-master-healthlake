@@ -1,6 +1,6 @@
 # Data Generator
 
-Utilitário para geração de dados **batch** e **streaming**, com suporte a reprodutibilidade por meio de seed, sobrescrita de arquivos existentes, envio de eventos ao Azure Event Hubs e upload de partições locais para o Amazon S3.
+Utilitário para geração de dados **batch** e **streaming**, com perfis explícitos de qualidade, suporte a reprodutibilidade por meio de seed, sobrescrita controlada de arquivos existentes, envio de eventos ao Azure Event Hubs e upload de partições locais para o Amazon S3.
 
 ---
 
@@ -33,8 +33,10 @@ O arquivo `requirements.txt` contém as dependências utilizadas pelo projeto.
 
 Gera os arquivos de dados referentes à data informada:
 
+Para gerar a partição que deve seguir pelo fluxo até a Gold, use o perfil `clean`:
+
 ```powershell
-python .\data-generator\main.py --odate 2026-08-06 --seed 42
+python .\data-generator\main.py --odate 2026-07-05 --seed 42 --profile clean
 ```
 
 ### Parâmetros
@@ -43,8 +45,13 @@ python .\data-generator\main.py --odate 2026-08-06 --seed 42
 |---|---|
 | `--odate` | Data de referência da partição, no formato `YYYY-MM-DD`. |
 | `--seed` | Seed utilizada para tornar a geração de dados reproduzível. |
+| `--profile` | Perfil `clean` ou `chaos`. O default é `chaos` para manter compatibilidade. |
 
-Ao utilizar a mesma seed e os mesmos parâmetros, o gerador deve produzir os mesmos dados.
+O perfil `clean` não injeta novos nulos ou duplicatas. Depois de combinar registros retidos e novos, ele aplica o contrato de colunas, normaliza os campos usados pelas regras DQ, remove registros incompletos em campos não-chave, deduplica as chaves e reconcilia as referências de atendimentos com pacientes, médicos, hospitais e doenças presentes no snapshot. No gate, essa redução é reconciliada por `removed_by_cleaning = input_rows - checked_rows`; depois da limpeza, qualquer violação restante bloqueia o salvamento da tabela inteira. O perfil `chaos` preserva as taxas de nulos e duplicatas configuradas em `config/settings.py` e é indicado para demonstrar quarentena e bloqueio fail-closed.
+
+`clean` saneia uma base existente, mas não cria automaticamente entidades-base configuradas com zero novos registros. Em um clone sem snapshots anteriores, prepare uma fixture/seed coerente antes da primeira partição; os contratos CSV serão preservados, porém datasets-base vazios serão corretamente bloqueados pelo gate downstream.
+
+A seed melhora a repetibilidade, mas o resultado também depende do estado de `id_control.json`, do snapshot anterior, do relógio e das versões das bibliotecas; ela não garante sozinha reprodução byte a byte.
 
 ---
 
@@ -53,7 +60,7 @@ Ao utilizar a mesma seed e os mesmos parâmetros, o gerador deve produzir os mes
 Por padrão, o gerador pode impedir a substituição de arquivos existentes. Para sobrescrever os CSVs da mesma partição, utilize a opção `--overwrite`:
 
 ```powershell
-python .\data-generator\main.py --odate 2026-08-06 --seed 42 --overwrite
+python .\data-generator\main.py --odate 2026-07-05 --seed 42 --profile clean --overwrite
 ```
 
 > Use `--overwrite` com atenção, pois os arquivos existentes da partição poderão ser substituídos.
@@ -95,7 +102,7 @@ Antes da execução, confirme se as credenciais e configurações do Event Hubs 
 Para enviar ao S3 os arquivos associados a uma data de referência:
 
 ```powershell
-python .\data-generator\ingestion-s3\upload_to_s3.py --odate 2026-08-06
+python .\data-generator\ingestion-s3\upload_to_s3.py --odate 2026-07-05
 ```
 
 ### Parâmetro
@@ -123,11 +130,11 @@ Uma execução completa pode seguir esta ordem:
 # 1. Instalar dependências
 python -m pip install -r .\data-generator\requirements.txt
 
-# 2. Gerar os dados batch
-python .\data-generator\main.py --odate 2026-08-06 --seed 42
+# 2. Gerar uma partição limpa para promoção até a Gold
+python .\data-generator\main.py --odate 2026-07-05 --seed 42 --profile clean
 
 # 3. Enviar a partição gerada para o S3
-python .\data-generator\ingestion-s3\upload_to_s3.py --odate 2026-08-06
+python .\data-generator\ingestion-s3\upload_to_s3.py --odate 2026-07-05
 
 # 4. Gerar e enviar eventos de streaming
 python .\data-generator\main.py --streaming --stream-count 10 --seed 42 --send-eventhub
@@ -140,13 +147,21 @@ python .\data-generator\main.py --streaming --stream-count 10 --seed 42 --send-e
 ### Gerar outra partição
 
 ```powershell
-python .\data-generator\main.py --odate 2026-08-07 --seed 42
+python .\data-generator\main.py --odate AAAA-MM-DD --seed 42 --profile clean
+```
+
+### Gerar uma partição com anomalias para testar o gate
+
+Use uma `odate` diferente da partição limpa, pois o caminho de ingestão deve permanecer imutável:
+
+```powershell
+python .\data-generator\main.py --odate AAAA-MM-DD --seed 42 --profile chaos
 ```
 
 ### Gerar novamente a mesma partição
 
 ```powershell
-python .\data-generator\main.py --odate 2026-08-06 --seed 42 --overwrite
+python .\data-generator\main.py --odate 2026-07-05 --seed 42 --profile clean --overwrite
 ```
 
 ### Gerar 100 eventos de streaming
@@ -162,10 +177,11 @@ python .\data-generator\main.py --streaming --stream-count 100 --seed 42 --send-
 | Operação | Comando |
 |---|---|
 | Instalar dependências | `python -m pip install -r .\data-generator\requirements.txt` |
-| Gerar dados batch | `python .\data-generator\main.py --odate 2026-08-06 --seed 42` |
-| Sobrescrever CSVs | `python .\data-generator\main.py --odate 2026-08-06 --seed 42 --overwrite` |
+| Gerar batch aprovado | `python .\data-generator\main.py --odate 2026-07-05 --seed 42 --profile clean` |
+| Gerar batch para testar quarentena | `python .\data-generator\main.py --odate AAAA-MM-DD --seed 42 --profile chaos` |
+| Sobrescrever CSVs | `python .\data-generator\main.py --odate 2026-07-05 --seed 42 --profile clean --overwrite` |
 | Gerar e enviar streaming | `python .\data-generator\main.py --streaming --stream-count 10 --seed 42 --send-eventhub` |
-| Enviar partição ao S3 | `python .\data-generator\ingestion-s3\upload_to_s3.py --odate 2026-08-06` |
+| Enviar partição ao S3 | `python .\data-generator\ingestion-s3\upload_to_s3.py --odate 2026-07-05` |
 
 ---
 

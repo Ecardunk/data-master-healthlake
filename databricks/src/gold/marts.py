@@ -6,6 +6,26 @@ from pyspark.sql import functions as F
 
 CATALOG = spark.conf.get("healthlake.catalog")
 SILVER = f"{CATALOG}.silver"
+PROMOTION_CONTROL = f"{CATALOG}.observability.dq_promotion_control"
+
+
+def approved_silver(table_name: str):
+    """Read only the snapshot approved by the complete Silver-to-Gold gate."""
+    source = spark.read.table(f"{SILVER}.{table_name}").alias("source")
+    approved = (
+        spark.read.table(PROMOTION_CONTROL)
+        .where(F.col("dq_stage") == "silver_to_gold")
+        .select(F.col("odate").alias("_approved_odate"))
+        .alias("approved")
+    )
+    return (
+        source.join(
+            F.broadcast(approved),
+            F.col("source.snapshot_date") == F.col("approved._approved_odate"),
+            "inner",
+        )
+        .drop("_approved_odate")
+    )
 
 
 @dp.materialized_view(
@@ -13,14 +33,14 @@ SILVER = f"{CATALOG}.silver"
     comment="PII-minimized patient dimension; direct identifiers are intentionally excluded.",
 )
 def dim_patient():
-    return spark.read.table(f"{SILVER}.patients_current").select(
+    return approved_silver("patients_current").select(
         "patient_id", "gender", "blood_type", "birth_date", "city", "state", "snapshot_date"
     )
 
 
 @dp.materialized_view(name="dim_hospital", comment="Conformed hospital dimension.")
 def dim_hospital():
-    return spark.read.table(f"{SILVER}.hospitals_current").select(
+    return approved_silver("hospitals_current").select(
         "hospital_id",
         "hospital_name",
         "hospital_type",
@@ -33,22 +53,22 @@ def dim_hospital():
 
 @dp.materialized_view(name="dim_doctor", comment="Conformed doctor dimension.")
 def dim_doctor():
-    return spark.read.table(f"{SILVER}.doctors_current").select(
+    return approved_silver("doctors_current").select(
         "doctor_id", "doctor_name", "specialty", "hospital_id", "snapshot_date"
     )
 
 
 @dp.materialized_view(name="dim_disease", comment="Conformed disease dimension.")
 def dim_disease():
-    return spark.read.table(f"{SILVER}.diseases_current").select(
+    return approved_silver("diseases_current").select(
         "disease_id", "disease_name", "category", "severity_level", "snapshot_date"
     )
 
 
 @dp.materialized_view(name="fact_attendance", comment="PII-minimized attendance fact table.")
-@dp.expect_or_drop("attendance_date_present", "attendance_date IS NOT NULL")
+@dp.expect_or_fail("attendance_date_present", "attendance_date IS NOT NULL")
 def fact_attendance():
-    return spark.read.table(f"{SILVER}.attendance_current").select(
+    return approved_silver("attendance_current").select(
         "attendance_id",
         "patient_id",
         "doctor_id",

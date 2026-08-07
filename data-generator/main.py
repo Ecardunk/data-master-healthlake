@@ -18,6 +18,7 @@ from config.settings import (
 )
 
 from utils.churn_utils import remove_random_rows
+from utils.clean_data_utils import sanitize_clean_snapshots
 from utils.file_utils import ensure_directories
 from utils.metadata_utils import load_metadata, save_metadata
 from utils.snapshot_utils import load_previous_snapshot, parse_odate
@@ -90,6 +91,15 @@ def parse_args():
         help="Overwrite an existing odate partition"
     )
     parser.add_argument(
+        "--profile",
+        choices=["clean", "chaos"],
+        default="chaos",
+        help=(
+            "Data-quality profile. 'chaos' preserves anomaly injection; "
+            "'clean' disables new anomalies and sanitizes the full snapshot."
+        )
+    )
+    parser.add_argument(
         "--streaming",
         action="store_true",
         help="Generate streaming vital sign events instead of raw snapshots"
@@ -140,7 +150,13 @@ def configure_randomness(seed):
     Faker.seed(seed)
 
 
-def quality_kwargs(dataset_name):
+def quality_kwargs(dataset_name, profile_name="chaos"):
+    if profile_name == "clean":
+        return {
+            "null_percentages": {},
+            "duplicate_percentage": 0
+        }
+
     profile = DATASET_PROFILES.get(dataset_name, {})
 
     return {
@@ -365,13 +381,13 @@ def calculate_max_ids(metadata):
     }
 
 
-def generate_new_records(spec, metadata, max_ids):
+def generate_new_records(spec, metadata, max_ids, profile_name="chaos"):
     reference_kwargs = {
         argument_name: max_ids[dataset_name]
         for argument_name, dataset_name in spec.reference_limits
     }
 
-    generator = spec.generator_type(**quality_kwargs(spec.name))
+    generator = spec.generator_type(**quality_kwargs(spec.name, profile_name))
 
     return generator.generate(
         n_records=RECORD_COUNTS[spec.name],
@@ -380,19 +396,24 @@ def generate_new_records(spec, metadata, max_ids):
     )
 
 
-def generate_snapshots(raw_base_dir, odate, metadata):
+def generate_snapshots(raw_base_dir, odate, metadata, profile_name="chaos"):
     max_ids = calculate_max_ids(metadata)
 
-    return {
+    snapshots = {
         spec.name: build_snapshot(
             spec.name,
             spec.file_name,
             raw_base_dir,
             odate,
-            generate_new_records(spec, metadata, max_ids)
+            generate_new_records(spec, metadata, max_ids, profile_name)
         )
         for spec in DATASET_SPECS
     }
+
+    if profile_name == "clean":
+        return sanitize_clean_snapshots(snapshots)
+
+    return snapshots
 
 
 def advance_metadata(metadata):
@@ -424,12 +445,14 @@ def main():
 
     print("Current metadata:")
     print(metadata)
+    print(f"Quality profile: {args.profile}")
     print("\nGenerating snapshots:")
 
     snapshots = generate_snapshots(
         raw_base_dir,
         args.odate,
-        metadata
+        metadata,
+        args.profile
     )
     updated_metadata = advance_metadata(metadata)
 
