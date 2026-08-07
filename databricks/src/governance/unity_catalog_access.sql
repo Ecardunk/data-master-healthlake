@@ -1,52 +1,53 @@
--- HealthLake: matriz mínima de acesso no Unity Catalog.
+-- HealthLake: matriz humana de leitura no Unity Catalog.
 --
--- Os grupos devem ser grupos de CONTA (SCIM/IdP), nunca grupos locais do
--- workspace. Isso permite que a mesma política seja concedida a objetos UC
--- e que a inclusão/remoção de pessoas seja auditável no provedor de identidade.
+-- Estes cinco principals devem ser grupos de CONTA/External sincronizados pelo
+-- IdP. Não crie grupos locais do workspace e não conceda privilégios direto a
+-- pessoas. A associação aos workspaces deve seguir:
+--   dev  : data-engineering-admin, data-engineering
+--   prod : os cinco grupos declarados neste arquivo
 --
--- Não conceda MODIFY, CREATE, MANAGE, READ_FILES ou WRITE_FILES a estes
--- grupos. A permissão SELECT em schema se aplica a tabelas e views atuais e
--- futuras daquele schema.
-
--- Consumidores: somente produtos analíticos curados.
-GRANT USE CATALOG ON CATALOG healthlake_dev TO `healthlake-dev-bi-readers`;
-GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_dev.gold TO `healthlake-dev-bi-readers`;
-
-GRANT USE CATALOG ON CATALOG healthlake_dev TO `healthlake-dev-data-analysts`;
-GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_dev.gold TO `healthlake-dev-data-analysts`;
-
--- Engenharia: inspeção e depuração das camadas operacionais, sem escrita.
-GRANT USE CATALOG ON CATALOG healthlake_dev TO `healthlake-dev-data-engineers-readers`;
-GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_dev.bronze TO `healthlake-dev-data-engineers-readers`;
-GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_dev.silver TO `healthlake-dev-data-engineers-readers`;
-
--- Contributors can author jobs/pipelines and write operational layers.
--- They have no Gold, quarantine, external-location, or global-admin access.
-GRANT USE CATALOG ON CATALOG healthlake_dev TO `healthlake-dev-data-engineers-contributors`;
-GRANT USE SCHEMA, SELECT, MODIFY, CREATE TABLE ON SCHEMA healthlake_dev.bronze TO `healthlake-dev-data-engineers-contributors`;
-GRANT USE SCHEMA, SELECT, MODIFY, CREATE TABLE ON SCHEMA healthlake_dev.silver TO `healthlake-dev-data-engineers-contributors`;
+-- Mesmo data-engineering-admin é somente leitor de dados. Escrita, deploy,
+-- ownership e execução das pipelines pertencem a service principals separados.
+-- Nenhum grupo abaixo recebe MODIFY, CREATE, MANAGE, READ_FILES, WRITE_FILES,
+-- external locations, quarantine ou observability.
 
 -- -------------------------------------------------------------------------
--- Production: acesso humano estritamente de leitura.
---
--- Estes grupos devem receber somente a atribuição USER no workspace de
--- produção. Não crie um grupo "contributors" no workspace produtivo: a
--- escrita e a criação de jobs/pipelines ficam restritas à identidade de
--- serviço usada pelo CI/CD, com privilégios mínimos e auditáveis.
---
--- Não conceda aos grupos abaixo MODIFY, CREATE TABLE, CREATE SCHEMA,
--- MANAGE, READ_FILES, WRITE_FILES, acesso a external locations ou acesso
--- ao schema quarantine. Também não conceda permissões diretas a usuários.
+-- Development
 
--- Consumidores de dados: somente produtos curados da Gold.
-GRANT USE CATALOG ON CATALOG healthlake_prod TO `healthlake-prod-bi-readers`;
-GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_prod.gold TO `healthlake-prod-bi-readers`;
+-- Administrador funcional de engenharia: lê Bronze, Silver e Gold.
+GRANT USE CATALOG ON CATALOG healthlake_dev TO `data-engineering-admin`;
+GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_dev.bronze TO `data-engineering-admin`;
+GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_dev.silver TO `data-engineering-admin`;
+GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_dev.gold TO `data-engineering-admin`;
 
-GRANT USE CATALOG ON CATALOG healthlake_prod TO `healthlake-prod-data-analysts`;
-GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_prod.gold TO `healthlake-prod-data-analysts`;
+-- Engenharia: lê somente Silver e Gold.
+GRANT USE CATALOG ON CATALOG healthlake_dev TO `data-engineering`;
+GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_dev.silver TO `data-engineering`;
+GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_dev.gold TO `data-engineering`;
 
--- Engenharia: diagnóstico das camadas operacionais, sempre sem escrita.
--- Gold permanece reservada aos consumidores analíticos acima.
-GRANT USE CATALOG ON CATALOG healthlake_prod TO `healthlake-prod-data-engineers-readers`;
-GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_prod.bronze TO `healthlake-prod-data-engineers-readers`;
-GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_prod.silver TO `healthlake-prod-data-engineers-readers`;
+-- -------------------------------------------------------------------------
+-- Production
+
+-- Administrador funcional de engenharia: lê Bronze, Silver e Gold.
+GRANT USE CATALOG ON CATALOG healthlake_prod TO `data-engineering-admin`;
+GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_prod.bronze TO `data-engineering-admin`;
+GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_prod.silver TO `data-engineering-admin`;
+GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_prod.gold TO `data-engineering-admin`;
+
+-- Engenharia: lê somente Silver e Gold.
+GRANT USE CATALOG ON CATALOG healthlake_prod TO `data-engineering`;
+GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_prod.silver TO `data-engineering`;
+GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_prod.gold TO `data-engineering`;
+
+-- Consumidores produtivos: leem somente Silver e Gold de produção.
+GRANT USE CATALOG ON CATALOG healthlake_prod TO `data-analysts`;
+GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_prod.silver TO `data-analysts`;
+GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_prod.gold TO `data-analysts`;
+
+GRANT USE CATALOG ON CATALOG healthlake_prod TO `data-scientists`;
+GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_prod.silver TO `data-scientists`;
+GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_prod.gold TO `data-scientists`;
+
+GRANT USE CATALOG ON CATALOG healthlake_prod TO `power-bi`;
+GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_prod.silver TO `power-bi`;
+GRANT USE SCHEMA, SELECT ON SCHEMA healthlake_prod.gold TO `power-bi`;

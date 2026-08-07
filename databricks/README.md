@@ -6,17 +6,32 @@ Os grupos são criados no nível da conta Databricks e atribuídos ao workspace
 com a entitlement `USER`; a matriz de privilégios do Unity Catalog está em
 [`src/governance/unity_catalog_access.sql`](src/governance/unity_catalog_access.sql).
 
-| Grupo | Acesso a dados | Não recebe |
+| Grupo | Dev | Prod |
 | --- | --- | --- |
-| `healthlake-dev-data-engineers-contributors` | Criar tabelas e escrever em Bronze/Silver; criar jobs e pipelines próprios | Gold, quarentena, external locations e administração global |
+| `data-engineering-admin` | Leitura em Bronze, Silver e Gold | Leitura em Bronze, Silver e Gold |
+| `data-engineering` | Leitura em Silver e Gold | Leitura em Silver e Gold |
+| `data-analysts` | Sem acesso | Leitura em Silver e Gold |
+| `data-scientists` | Sem acesso | Leitura em Silver e Gold |
+| `power-bi` | Sem acesso | Leitura em Silver e Gold |
 
-Os contribuidores usam o diretório de autoria
-`/Workspace/Users/cardosoestevo@yahoo.com.br/healthlake-engineering`, onde o
-grupo tem `CAN_MANAGE`. Cada pessoa passa a ter `CAN_MANAGE` somente nos jobs
-e pipelines que ela criar; o grupo não recebeu gestão dos pipelines publicados.
-| `healthlake-dev-bi-readers` | `SELECT` na camada Gold | Bronze, Silver, escrita e administração |
-| `healthlake-dev-data-analysts` | `SELECT` na camada Gold | Bronze, Silver, escrita e administração |
-| `healthlake-dev-data-engineers-readers` | `SELECT` nas camadas Bronze e Silver | Gold, escrita, acesso direto ao ADLS e administração |
+Os cinco grupos são estritamente leitores. Apesar do nome,
+`data-engineering-admin` não recebe escrita, ownership, `MANAGE`, acesso a
+external locations nem administração do workspace. Apenas os dois grupos de
+engenharia são atribuídos ao workspace dev; todos os cinco são atribuídos ao
+workspace prod.
+
+Workspace access, `CAN USE` em SQL warehouses, acesso a dashboards e
+permissões sobre jobs/pipelines são controles separados dos grants do Unity
+Catalog e devem seguir o mesmo princípio de menor privilégio. Escrita, deploy e
+execução pertencem a service principals dedicados, nunca aos grupos humanos.
+
+O `run_as` dos três Jobs e das três Pipelines é declarado no Bundle e não
+depende de quem executou o deploy: dev usa `sp-healthlake-dev-pipeline`
+(`03b5799c-110f-484f-8b1b-e3fd88809c64`) e prod usa
+`sp-healthlake-prod-pipeline` (`bfeb3006-1824-4361-bacb-3697f6e33262`). O CI/CD
+autentica com OAuth M2M. Um usuário humano pode validar o Bundle, mas os deploys
+regulares devem ser feitos pelo workflow do ambiente para evitar uma segunda
+instância de desenvolvimento sob o diretório pessoal do usuário.
 
 Os grupos começam vazios de propósito: a associação de pessoas deve ser feita
 no IdP/SCIM de acordo com a função de cada colaborador, sem conceder privilégios

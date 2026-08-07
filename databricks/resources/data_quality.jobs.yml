@@ -2,6 +2,8 @@ resources:
   jobs:
     healthlake_bronze_to_silver_dq:
       name: healthlake-dq-bronze-to-silver-${bundle.target}
+      run_as:
+        service_principal_name: ${var.run_as_service_principal_name}
       description: DQX gate that protects Silver from invalid Bronze snapshots.
       max_concurrent_runs: 1
       queue:
@@ -36,6 +38,8 @@ resources:
 
     healthlake_silver_to_gold_dq:
       name: healthlake-dq-silver-to-gold-${bundle.target}
+      run_as:
+        service_principal_name: ${var.run_as_service_principal_name}
       description: DQX gate that protects Gold from invalid Silver snapshots.
       max_concurrent_runs: 1
       queue:

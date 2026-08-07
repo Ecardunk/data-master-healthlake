@@ -7,6 +7,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 BRONZE_INGESTION = REPO_ROOT / "databricks" / "src" / "bronze" / "ingestion.py"
 PRODUCTION_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "deploy-prod.yml"
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+DEVELOPMENT_SERVICE_PRINCIPAL = "03b5799c-110f-484f-8b1b-e3fd88809c64"
+PRODUCTION_SERVICE_PRINCIPAL = "bfeb3006-1824-4361-bacb-3697f6e33262"
 
 
 def assigned_literal(path: Path, variable_name: str):
@@ -156,6 +158,29 @@ def test_production_deploy_leaves_observability_compute_stopped():
     assert 'databricks warehouses stop "$warehouse_id"' in workflow
     assert 'databricks warehouses get "$warehouse_id"' in workflow
     assert 'if [[ "$state" == "STOPPED" ]]' in workflow
+
+
+def test_all_jobs_and_pipelines_run_as_the_environment_service_principal():
+    bundle_config = (
+        REPO_ROOT / "databricks" / "databricks.yml"
+    ).read_text(encoding="utf-8")
+    resource_sources = [
+        REPO_ROOT / "databricks" / "resources" / "bronze.pipeline.yml",
+        REPO_ROOT / "databricks" / "resources" / "silver.pipeline.yml",
+        REPO_ROOT / "databricks" / "resources" / "gold.pipeline.yml",
+        REPO_ROOT / "databricks" / "resources" / "data_quality.jobs.yml",
+        REPO_ROOT / "databricks" / "resources" / "medallion.job.yml",
+    ]
+    resources = "\n".join(
+        source.read_text(encoding="utf-8") for source in resource_sources
+    )
+
+    assert DEVELOPMENT_SERVICE_PRINCIPAL in bundle_config
+    assert PRODUCTION_SERVICE_PRINCIPAL in bundle_config
+    assert resources.count(
+        "service_principal_name: ${var.run_as_service_principal_name}"
+    ) == 6
+    assert "run_as:\n        user_name:" not in resources
 
 
 def test_observability_dashboard_selects_the_current_workspace_safely():
