@@ -1,9 +1,9 @@
 {
 	"name": "trigger_case",
 	"properties": {
-		"description": "Todo dia 05 de cada mês/",
+		"description": "Copia mensal do S3 para a Raw no dia 05; permanece parado ate aprovacao operacional.",
 		"annotations": [],
-		"runtimeState": "Started",
+		"runtimeState": "Stopped",
 		"pipelines": [
 			{
 				"pipelineReference": {

@@ -1,0 +1,12 @@
+{
+  "environment": "dev",
+  "factoryName": "adf-data-master-dev",
+  "resourceGroup": "rg-case-health-data",
+  "location": "brazilsouth",
+  "adlsUrl": "https://sthealthdatalake001.dfs.core.windows.net/",
+  "rawRoot": "abfss://raw@sthealthdatalake001.dfs.core.windows.net",
+  "keyVaultName": "kv-data-master-case",
+  "keyVaultUrl": "https://kv-data-master-case.vault.azure.net/",
+  "s3BucketName": "s3-data-master-bucket",
+  "desiredTriggerState": "Stopped"
+}

@@ -1,5 +1,5 @@
 {
-	"name": "adf-data-master-dev",
+	"name": "adf-healthlake-prod-brs-01",
 	"properties": {
 		"trustModeClaimForMi": {
 			"value": "Enabled",

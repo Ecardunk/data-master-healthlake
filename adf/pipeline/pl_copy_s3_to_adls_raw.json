@@ -119,7 +119,7 @@
 											},
 											{
 												"name": "sink",
-												"value": "abfss://raw@sthealthdatalake001.dfs.core.windows.net/@{item()}/odate=@{pipeline().parameters.odate}/@{item()}.csv"
+												"value": "raw/@{item()}/odate=@{pipeline().parameters.odate}/@{item()}.csv"
 											}
 										],
 										"typeProperties": {

@@ -1,0 +1,12 @@
+{
+  "environment": "prod",
+  "factoryName": "adf-healthlake-prod-brs-01",
+  "resourceGroup": "rg-healthlake-prod-brs-01",
+  "location": "brazilsouth",
+  "adlsUrl": "https://sthlkprodbrs01.dfs.core.windows.net/",
+  "rawRoot": "abfss://raw@sthlkprodbrs01.dfs.core.windows.net",
+  "keyVaultName": "kv-hlk-prod-brs-01",
+  "keyVaultUrl": "https://kv-hlk-prod-brs-01.vault.azure.net/",
+  "s3BucketName": "s3-data-master-bucket",
+  "desiredTriggerState": "Stopped"
+}

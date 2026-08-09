@@ -75,10 +75,10 @@ O catálogo e os schemas já são criados pela configuração de Unity Catalog:
 Os arquivos Delta gerenciados ficam em `managed/healthlake_dev`; o container
 `raw` continua como landing zone somente leitura.
 
-No target `prod`, a origem Raw continua em
-`abfss://raw@sthealthdatalake001.dfs.core.windows.net/`, enquanto o catálogo
-`healthlake_prod` grava suas tabelas gerenciadas no storage de produção
-`sthlkprodbrs01`.
+Cada target lê a Raw do próprio ambiente: dev usa
+`abfss://raw@sthealthdatalake001.dfs.core.windows.net/` e prod usa
+`abfss://raw@sthlkprodbrs01.dfs.core.windows.net/`. O catálogo
+`healthlake_prod` também grava suas tabelas gerenciadas no storage produtivo.
 
 ## Comandos de operação
 
