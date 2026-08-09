@@ -127,6 +127,7 @@ def test_successful_main_ci_automatically_deploys_without_running_data():
         "github.ref == 'refs/heads/main'"
     ) in ci_workflow
     assert "uses: ./.github/workflows/deploy-prod.yml" in ci_workflow
+    assert "secrets: inherit" in ci_workflow
     assert "run_batch_refresh: false" in ci_workflow
     assert "cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}" in ci_workflow
     assert "workflow_call:" in workflow
@@ -142,6 +143,8 @@ def test_successful_main_ci_automatically_deploys_without_running_data():
         "github.event_name == 'workflow_dispatch'"
     ) in workflow
     assert '"$GITHUB_EVENT_NAME" != "workflow_dispatch"' in workflow
+    assert '[[ -z "$DATABRICKS_CLIENT_SECRET" ]]' in workflow
+    assert "databricks current-user me --output json >/dev/null" in workflow
     assert workflow.count("default: false") == 2
 
 
