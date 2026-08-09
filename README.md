@@ -591,9 +591,9 @@ O case ainda não comprova capacidade de grande volume por teste de carga. O DQX
 
 | Workflow | Gatilho | Ações |
 | --- | --- | --- |
-| `ci.yml` | Push/PR em `develop` ou `main` | Python 3.11, dependências, pytest, compileall e `bundle validate` dev |
+| `ci.yml` | Push/PR em `develop` ou `main` | Python 3.11, dependências, pytest, compileall e `bundle validate` dev; depois de um push aprovado em `main`, chama o deploy produtivo somente se todo o CI passar |
 | `deploy-dev.yml` | Push em `develop` com mudança em `databricks/**` ou `.github/workflows/**`, ou execução manual | Valida e faz deploy do target `dev` |
-| `deploy-prod.yml` | Execução manual em `main` com `odate` | Checkout do SHA do workflow, valida, planeja, faz deploy do target `prod` e executa o refresh |
+| `deploy-prod.yml` | Chamado automaticamente pelo CI de `main`, ou manualmente | Checkout do SHA aprovado, valida, planeja e faz deploy do target `prod`; batch só executa por chamada manual com opt-in e `odate` |
 
 Os deploys usam OAuth M2M e GitHub Environments. Configure:
 
@@ -603,9 +603,9 @@ Os deploys usam OAuth M2M e GitHub Environments. Configure:
 | `DATABRICKS_CLIENT_ID` | Variable | Development e production |
 | `DATABRICKS_CLIENT_SECRET` | Secret | Development e production |
 
-O Environment `production` deve exigir reviewers e restringir branches/tags. O workflow também rejeita refs diferentes de `main`, faz checkout do SHA do próprio run e fixa as actions por commit. A Raw é versionada no Bundle como `abfss://raw@sthealthdatalake001.dfs.core.windows.net`; o catálogo `healthlake_prod` mantém seus dados gerenciados em `sthlkprodbrs01`.
+O `CODEOWNERS` e a proteção de `main` formam o gate humano: somente PR aprovado pelo owner e com CI verde pode ser mesclado. O Environment `production` restringe a branch a `main`; adicionar um reviewer também nesse Environment cria um segundo gate manual e deixa o deploy aguardando aprovação. O workflow rejeita refs diferentes de `main`, faz checkout do SHA do próprio run e fixa as actions por commit. A Raw é versionada no Bundle como `abfss://raw@sthealthdatalake001.dfs.core.windows.net`; o catálogo `healthlake_prod` mantém seus dados gerenciados em `sthlkprodbrs01`.
 
-O CI/CD atual executa os testes versionados do gerador e o refresh produtivo após o deploy, mas não provisiona cloud, não publica os artefatos ADF, não executa `unity_catalog_access.sql` e não faz smoke test end-to-end independente no workspace.
+O CI/CD atual executa os testes versionados e promove automaticamente o Bundle depois de um merge aprovado em `main`. Essa promoção não executa batch nem streaming. O processo ainda não provisiona cloud, não publica os artefatos ADF, não executa `unity_catalog_access.sql` e não faz smoke test end-to-end independente no workspace.
 
 ---
 
@@ -828,11 +828,12 @@ Sem `--send-eventhub`, o JSONL é gerado localmente. Com a opção, o envio term
 
 ### 4.12 Deploy de produção
 
-1. Proteja o GitHub Environment `production` com reviewers e permita somente `main`.
+1. Proteja `main` para aceitar somente PR, exija o `CODEOWNER` e mantenha o Environment `production` restrito a `main`.
 2. Configure `DATABRICKS_HOST`, `DATABRICKS_CLIENT_ID` e `DATABRICKS_CLIENT_SECRET` no Environment.
-3. Confirme que os cinco arquivos da mesma `odate` existem na Raw de `sthealthdatalake001`.
-4. Execute manualmente o workflow `Deploy production` em `main` e informe a `odate` no formato `YYYY-MM-DD`.
-5. Acompanhe no mesmo run as etapas validate, plan, deploy e `healthlake_medallion_refresh`; depois execute os smoke tests funcionais.
+3. Depois da aprovação e merge em `main`, acompanhe o CI. Se todos os testes e a validação dev passarem, ele chama automaticamente validate, plan e deploy de produção para o mesmo SHA.
+4. O deploy automático não executa dados e deixa o Warehouse de observabilidade parado.
+5. Para o batch mensal, confirme os cinco arquivos da mesma `odate` na Raw e execute manualmente `Deploy production` com `run_batch_refresh=true` e a data `YYYY-MM-DD`.
+6. Acompanhe o `healthlake_medallion_refresh` e execute os smoke tests funcionais.
 
 ### 4.13 Roteiro de demonstração
 

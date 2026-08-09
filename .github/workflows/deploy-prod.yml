@@ -1,11 +1,29 @@
 name: Deploy production
 
 on:
+  workflow_call:
+    inputs:
+      run_batch_refresh:
+        description: Run the monthly batch refresh after deploying.
+        required: false
+        default: false
+        type: boolean
+      odate:
+        description: Raw partition date; required only for a batch refresh.
+        required: false
+        default: ""
+        type: string
   workflow_dispatch:
     inputs:
-      odate:
-        description: Raw partition date to process in YYYY-MM-DD format.
+      run_batch_refresh:
+        description: Run the monthly batch refresh after deploying.
         required: true
+        default: false
+        type: boolean
+      odate:
+        description: Raw partition date; required only for a batch refresh.
+        required: false
+        default: ""
         type: string
 
 permissions:
@@ -20,7 +38,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 210
-    # Configure required reviewers in this GitHub Environment.
+    # Restrict this GitHub Environment to the protected main branch.
     environment: production
     env:
       DATABRICKS_AUTH_TYPE: oauth-m2m
@@ -28,10 +46,22 @@ jobs:
       DATABRICKS_CLIENT_ID: ${{ vars.DATABRICKS_CLIENT_ID }}
       DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
       ODATE: ${{ inputs.odate }}
+      RUN_BATCH_REFRESH: ${{ inputs.run_batch_refresh }}
     steps:
       - name: Validate production input
         shell: bash
         run: |
+          if [[ "$RUN_BATCH_REFRESH" == "true" && "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]]; then
+            echo "batch refresh is allowed only through a manual workflow dispatch" >&2
+            exit 1
+          fi
+          if [[ "$RUN_BATCH_REFRESH" != "true" ]]; then
+            if [[ -n "$ODATE" ]]; then
+              echo "odate must be empty when run_batch_refresh is disabled" >&2
+              exit 1
+            fi
+            exit 0
+          fi
           if [[ ! "$ODATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
             echo "odate must use YYYY-MM-DD format" >&2
             exit 1
@@ -59,7 +89,34 @@ jobs:
         run: >-
           databricks bundle deploy --target prod
           --fail-on-active-runs
+      - name: Leave observability warehouse stopped
+        if: always()
+        # Preserve an earlier failure, but fail the deployment when this is the
+        # only failing step and production compute could remain running.
+        continue-on-error: ${{ job.status != 'success' }}
+        working-directory: databricks
+        shell: bash
+        run: |
+          warehouse_id="$(
+            databricks bundle summary --target prod --output json |
+              jq -er '.resources.sql_warehouses.healthlake_observability_warehouse.id'
+          )"
+          databricks warehouses stop "$warehouse_id" >/dev/null
+          for attempt in $(seq 1 30); do
+            state="$(
+              databricks warehouses get "$warehouse_id" --output json |
+                jq -er '.state'
+            )"
+            if [[ "$state" == "STOPPED" ]]; then
+              echo "Observability warehouse is stopped."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Observability warehouse did not stop; current state: $state" >&2
+          exit 1
       - name: Run production refresh
+        if: inputs.run_batch_refresh && github.event_name == 'workflow_dispatch'
         working-directory: databricks
         run: >-
           databricks bundle run healthlake_medallion_refresh
