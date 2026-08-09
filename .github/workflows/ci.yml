@@ -11,7 +11,8 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Never interrupt a production deployment that is already running.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   test:
@@ -53,3 +54,12 @@ jobs:
       - name: Validate DAB target
         working-directory: databricks
         run: databricks bundle validate --target dev
+
+  deploy-production:
+    name: Deploy production after main CI
+    needs: [test, validate-bundle]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/deploy-prod.yml
+    with:
+      run_batch_refresh: false
+      odate: ""

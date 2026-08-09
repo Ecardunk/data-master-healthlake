@@ -6,6 +6,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BRONZE_INGESTION = REPO_ROOT / "databricks" / "src" / "bronze" / "ingestion.py"
 PRODUCTION_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "deploy-prod.yml"
+CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
 
 def assigned_literal(path: Path, variable_name: str):
@@ -115,15 +116,43 @@ def test_production_reads_shared_raw_and_does_not_allow_runtime_override():
     assert "DATABRICKS_RAW_ROOT" not in workflow
 
 
-def test_production_workflow_deploys_main_sha_and_runs_requested_odate():
+def test_successful_main_ci_automatically_deploys_without_running_data():
+    ci_workflow = CI_WORKFLOW.read_text(encoding="utf-8")
     workflow = PRODUCTION_WORKFLOW.read_text(encoding="utf-8")
 
+    assert "deploy-production:" in ci_workflow
+    assert "needs: [test, validate-bundle]" in ci_workflow
+    assert (
+        "if: github.event_name == 'push' && "
+        "github.ref == 'refs/heads/main'"
+    ) in ci_workflow
+    assert "uses: ./.github/workflows/deploy-prod.yml" in ci_workflow
+    assert "run_batch_refresh: false" in ci_workflow
+    assert "cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}" in ci_workflow
+    assert "workflow_call:" in workflow
     assert "if: github.ref == 'refs/heads/main'" in workflow
     assert "ref: ${{ github.sha }}" in workflow
     assert "ODATE: ${{ inputs.odate }}" in workflow
+    assert "RUN_BATCH_REFRESH: ${{ inputs.run_batch_refresh }}" in workflow
     assert "inputs.ref" not in workflow
     assert "bundle run healthlake_medallion_refresh" in workflow
     assert '--params "odate=${ODATE}"' in workflow
+    assert (
+        "if: inputs.run_batch_refresh && "
+        "github.event_name == 'workflow_dispatch'"
+    ) in workflow
+    assert '"$GITHUB_EVENT_NAME" != "workflow_dispatch"' in workflow
+    assert workflow.count("default: false") == 2
+
+
+def test_production_deploy_leaves_observability_compute_stopped():
+    workflow = PRODUCTION_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "Leave observability warehouse stopped" in workflow
+    assert "continue-on-error: ${{ job.status != 'success' }}" in workflow
+    assert 'databricks warehouses stop "$warehouse_id"' in workflow
+    assert 'databricks warehouses get "$warehouse_id"' in workflow
+    assert 'if [[ "$state" == "STOPPED" ]]' in workflow
 
 
 def test_observability_dashboard_selects_the_current_workspace_safely():
