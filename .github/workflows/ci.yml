@@ -60,6 +60,7 @@ jobs:
     needs: [test, validate-bundle]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     uses: ./.github/workflows/deploy-prod.yml
+    secrets: inherit
     with:
       run_batch_refresh: false
       odate: ""

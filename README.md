@@ -605,6 +605,8 @@ Os deploys usam OAuth M2M e GitHub Environments. Configure:
 
 O `CODEOWNERS` e a proteção de `main` formam o gate humano: somente PR aprovado pelo owner e com CI verde pode ser mesclado. O Environment `production` restringe a branch a `main`; adicionar um reviewer também nesse Environment cria um segundo gate manual e deixa o deploy aguardando aprovação. O workflow rejeita refs diferentes de `main`, faz checkout do SHA do próprio run e fixa as actions por commit. A Raw é versionada no Bundle como `abfss://raw@sthealthdatalake001.dfs.core.windows.net`; o catálogo `healthlake_prod` mantém seus dados gerenciados em `sthlkprodbrs01`.
 
+O caller de produção usa `secrets: inherit` para disponibilizar os secrets ao workflow reutilizável. Antes da validação do Bundle, o workflow rejeita secret vazio e confirma a identidade OAuth com uma chamada de controle que não inicia compute.
+
 O CI/CD atual executa os testes versionados e promove automaticamente o Bundle depois de um merge aprovado em `main`. Essa promoção não executa batch nem streaming. O processo ainda não provisiona cloud, não publica os artefatos ADF, não executa `unity_catalog_access.sql` e não faz smoke test end-to-end independente no workspace.
 
 ---

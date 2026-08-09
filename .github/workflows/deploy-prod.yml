@@ -51,6 +51,10 @@ jobs:
       - name: Validate production input
         shell: bash
         run: |
+          if [[ -z "$DATABRICKS_CLIENT_SECRET" ]]; then
+            echo "DATABRICKS_CLIENT_SECRET is unavailable from environment production" >&2
+            exit 1
+          fi
           if [[ "$RUN_BATCH_REFRESH" == "true" && "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]]; then
             echo "batch refresh is allowed only through a manual workflow dispatch" >&2
             exit 1
@@ -78,6 +82,9 @@ jobs:
       - uses: databricks/setup-cli@60b64e3937ee15f5a8b914664d1e78a586a9a4da # v1.11.0
         with:
           version: "1.11.0"
+      - name: Verify production OAuth identity
+        shell: bash
+        run: databricks current-user me --output json >/dev/null
       - name: Validate production target
         working-directory: databricks
         run: databricks bundle validate --target prod
