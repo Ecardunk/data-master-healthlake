@@ -8,7 +8,7 @@ Plataforma de engenharia de dados desenvolvida com **Python, Amazon S3, Azure Da
 2. [**Arquitetura de Solução e Arquitetura Técnica**](#2-arquitetura-de-solução-e-arquitetura-técnica)
 3. [**Explicação sobre o Case Desenvolvido**](#3-explicação-sobre-o-case-desenvolvido)
 4. [Guia de configuração e execução](#4-guia-de-configuração-e-execução)
-5. [**Próximos Passos e Considerações Finais**](#6-proximos-passos-e-considerações-finais)
+5. [**Próximos Passos e Considerações Finais**](#5-proximos-passos-e-considerações-finais)
 6. [**Referências**](#6-referencias)
 
 ---
@@ -129,7 +129,276 @@ As relações representam o desenho lógico; PKs e FKs não são declaradas nem 
 
 ## 3. **Explicação sobre o Case Desenvolvido**
 
-### 3.1 Dados e granularidade
+### 3.1 Estrutura do Repositório
+
+O repositório foi organizado por responsabilidade, separando geração e ingestão de dados, artefatos de orquestração, processamento no Databricks, infraestrutura como código, dados de exemplo e automações de CI/CD. Essa divisão busca facilitar a manutenção, o desenvolvimento independente dos componentes e a compreensão do fluxo end-to-end da solução.
+
+```text
+data-master-healthlake/
+│
+├── .github/
+│   ├── CODEOWNERS
+│   └── workflows/
+│
+├── adf/
+│   ├── dataset/
+│   ├── environments/
+│   ├── factory/
+│   ├── linkedService/
+│   ├── pipeline/
+│   ├── scripts/
+│   ├── tests/
+│   └── trigger/
+│
+├── data-generator/
+│   ├── config/
+│   ├── contracts/
+│   ├── generators/
+│   ├── ingestion-s3/
+│   ├── metadata/
+│   ├── producers/
+│   ├── tests/
+│   ├── utils/
+│   ├── output/
+│   └── main.py
+│
+├── databricks/
+│   ├── resources/
+│   ├── src/
+│   │   ├── bronze/
+│   │   ├── silver/
+│   │   ├── gold/
+│   │   ├── dq/
+│   │   ├── streaming/
+│   │   ├── governance/
+│   │   └── dashboard/
+│   ├── tests/
+│   └── databricks.yml
+│
+├── infra/
+│   ├── eventhub/
+│   └── observability/
+│
+├── sample_data/
+│
+├── .gitignore
+├── LICENSE
+└── README.md
+```
+
+### `.github/`
+
+Contém os artefatos relacionados ao ciclo de desenvolvimento e CI/CD do projeto.
+
+* `CODEOWNERS`: define responsáveis por revisão e aprovação de alterações.
+* `workflows/`: contém os workflows do GitHub Actions responsáveis por testes, validações e deploys dos ambientes de desenvolvimento e produção.
+
+Os pipelines de CI executam, entre outras verificações, testes Python, validação dos templates Bicep, análise de sintaxe dos códigos Databricks e validação dos Declarative Automation Bundles.
+
+---
+
+### `data-generator/`
+
+Responsável pela **geração sintética dos dados batch e streaming**, constituindo a principal origem de dados simulada da solução.
+
+O ponto de entrada é:
+
+```text
+data-generator/main.py
+```
+
+A pasta está subdividida em componentes com responsabilidades específicas:
+
+* `config/`: parâmetros de geração, volumes, percentuais de churn, duplicidade e valores nulos.
+* `contracts/`: contratos de dados, incluindo o schema dos eventos de streaming.
+* `generators/`: geradores específicos para pacientes, hospitais, médicos, doenças, atendimentos e sinais vitais.
+* `utils/`: funções compartilhadas para snapshots, limpeza, geração de anomalias, metadata e manipulação de arquivos.
+* `producers/`: implementação do produtor responsável pelo envio de eventos ao Azure Event Hubs.
+* `ingestion-s3/`: scripts responsáveis pelo upload dos snapshots batch para o Amazon S3.
+* `metadata/`: mantém informações de controle utilizadas pela geração incremental, como os últimos IDs gerados.
+* `tests/`: testes automatizados dos contratos e perfis de geração.
+
+A pasta `output/` contém os dados efetivamente gerados durante a execução:
+
+```text
+output/
+├── raw/
+│   ├── odate=YYYY-MM-DD/
+│   │   ├── patients.csv
+│   │   ├── hospitals.csv
+│   │   ├── doctors.csv
+│   │   ├── diseases.csv
+│   │   └── attendance.csv
+│
+└── streaming/
+    └── streaming_events_<producer_run_id>.jsonl
+```
+
+Os arquivos de `output/` **não são versionados no Git**, pois representam estado operacional e podem crescer significativamente conforme novas execuções são realizadas. O histórico dos dados deve ser mantido nas camadas de armazenamento da própria arquitetura, como Amazon S3 e ADLS Gen2, evitando utilizar o Git como armazenamento de datasets.
+
+---
+
+### `adf/`
+
+Contém os artefatos versionados do **Azure Data Factory**, responsável pela movimentação dos snapshots batch do Amazon S3 para o ADLS Gen2.
+
+As principais estruturas são:
+
+* `linkedService/`: conexões do ADF com Amazon S3, Azure Key Vault e ADLS Gen2.
+* `dataset/`: datasets parametrizados utilizados pelas atividades de leitura e escrita.
+* `pipeline/`: definição do pipeline de ingestão S3 → ADLS.
+* `trigger/`: configuração do trigger associado à ingestão.
+* `environments/`: parâmetros específicos dos ambientes `dev` e `prod`.
+* `factory/`: definições das Data Factories utilizadas pelos ambientes.
+* `scripts/`: scripts PowerShell para deploy dos artefatos.
+* `tests/`: testes de contrato que validam a configuração versionada do ADF.
+
+O principal pipeline é:
+
+```text
+pl_copy_s3_to_adls_raw
+```
+
+Ele valida a existência dos arquivos esperados no S3 e realiza a cópia paralela dos datasets para a camada Raw do ADLS.
+
+---
+
+### `databricks/`
+
+Centraliza todo o processamento executado no **Azure Databricks**, incluindo as camadas Bronze, Silver e Gold, Data Quality, streaming, governança e observabilidade.
+
+O arquivo:
+
+```text
+databricks/databricks.yml
+```
+
+é o ponto principal do **Declarative Automation Bundle**, contendo variáveis, targets de ambiente e referências aos recursos que serão implantados.
+
+A pasta `resources/` contém as definições declarativas de:
+
+* Lakeflow Pipelines;
+* Jobs;
+* pipelines Bronze, Silver e Gold;
+* quality gates;
+* pipeline de streaming;
+* recursos de observabilidade;
+* alertas e dashboard.
+
+Já `src/` contém o código efetivamente executado:
+
+```text
+src/
+├── bronze/
+├── silver/
+├── gold/
+├── dq/
+├── streaming/
+├── governance/
+└── dashboard/
+```
+
+#### `src/bronze/`
+
+Responsável pela ingestão incremental dos arquivos da camada Raw utilizando Auto Loader e Spark Declarative Pipelines.
+
+#### `src/silver/`
+
+Contém as transformações de limpeza, normalização, tipagem, deduplicação e redução da exposição de PII.
+
+#### `src/gold/`
+
+Implementa o modelo analítico, incluindo dimensões, fato de atendimentos e KPIs utilizados para consumo analítico.
+
+#### `src/dq/`
+
+Implementa os **quality gates fail-closed** utilizando DQX. Os gates controlam a promoção:
+
+```text
+Bronze → Silver → Gold
+```
+
+Registros inválidos são direcionados para quarentena e violações críticas impedem a promoção da partição.
+
+#### `src/streaming/`
+
+Contém o consumidor e as transformações dos eventos de sinais vitais recebidos pelo Azure Event Hubs.
+
+#### `src/governance/`
+
+Mantém artefatos relacionados à governança do Unity Catalog, incluindo grants e definição da matriz de acesso dos grupos consumidores.
+
+#### `src/dashboard/`
+
+Contém os artefatos versionados relacionados ao dashboard de observabilidade.
+
+A pasta `tests/` contém testes de contrato dos pipelines, governança, streaming e observabilidade.
+
+---
+
+### `infra/`
+
+Contém os recursos de **Infrastructure as Code (IaC)** complementares à plataforma.
+
+Atualmente está dividida em:
+
+```text
+infra/
+├── eventhub/
+└── observability/
+```
+
+#### `infra/eventhub/`
+
+Responsável pelo provisionamento da infraestrutura de streaming, incluindo:
+
+* Azure Event Hubs Namespace;
+* Event Hub de sinais vitais;
+* partitions;
+* consumer group;
+* Access Connector;
+* Managed Identity;
+* RBAC;
+* integração com Unity Catalog.
+
+Os recursos são descritos utilizando **Azure Bicep** e acompanhados por scripts PowerShell de validação e deploy.
+
+#### `infra/observability/`
+
+Mantém a infraestrutura de observabilidade externa ao Databricks, incluindo a Logic App responsável por receber notificações operacionais e monitorar determinadas execuções do ADF.
+
+---
+
+### `sample_data/`
+
+Contém pequenos datasets sintéticos utilizados como **amostras e fixtures de referência**.
+
+Diferentemente dos snapshots completos gerados em `data-generator/output/`, esses arquivos são pequenos o suficiente para serem versionados e permitem:
+
+* visualizar o schema esperado;
+* entender o domínio do case;
+* realizar inspeções rápidas;
+* apoiar testes e demonstrações;
+* fornecer exemplos sem versionar grandes volumes de dados.
+
+A existência de `sample_data/` permite separar claramente:
+
+```text
+Dados de exemplo
+sample_data/
+→ pequenos
+→ versionados no Git
+
+Dados gerados operacionalmente
+data-generator/output/
+→ potencialmente grandes
+→ ignorados pelo Git
+→ persistidos em S3/ADLS
+```
+
+---
+
+### 3.2 Dados e granularidade
 
 | Dataset | Granularidade | Chave | Principais atributos | Classificação |
 | --- | --- | --- | --- | --- |
@@ -156,7 +425,7 @@ As relações representam o desenho lógico; PKs e FKs não são declaradas nem 
 
 Os cinco CSVs de `sample_data/` têm 41 registros cada, além do cabeçalho, e o JSONL tem 100 eventos. As amostras contêm nulos e duplicatas para inspeção de qualidade, mas nenhum código as carrega automaticamente.
 
-### 3.2 **Extração de Dados** e geração sintética
+### 3.3 **Extração de Dados** e geração sintética
 
 O ponto de entrada é [`data-generator/main.py`](data-generator/main.py). Em modo batch, cada `odate` representa uma fotografia completa:
 
@@ -187,9 +456,9 @@ timestamps UTC e unidades explícitas, gravando um JSONL novo por
 batches por `patient_id` para manter ordenação por paciente e respeita o tamanho
 máximo do Event Hubs. Não há connection string no código ou no Bundle.
 
-### 3.3 **Ingestão de Dados** batch
+### 3.4 **Ingestão de Dados** batch
 
-#### 3.3.1 Upload para o S3
+#### 3.4.1 Upload para o S3
 
 [`upload_to_s3.py`](data-generator/ingestion-s3/upload_to_s3.py) valida `odate`, exige uma partição local com CSVs e usa a cadeia padrão de credenciais do Boto3. Cada arquivo é enviado para:
 
@@ -199,7 +468,7 @@ s3://<bucket>/raw/<dataset>/odate=<YYYY-MM-DD>/<dataset>.csv
 
 O upload é sequencial e não grava manifest ou marcador de conclusão. Em produção, um manifest contendo quantidade, tamanho e checksum permitiria ao orquestrador rejeitar partições parciais.
 
-#### 3.3.2 S3 para ADLS com ADF
+#### 3.4.2 S3 para ADLS com ADF
 
 O pipeline [`pl_copy_s3_to_adls_raw`](adf/pipeline/pl_copy_s3_to_adls_raw.json) recebe:
 
@@ -228,7 +497,7 @@ implantado. Além disso, o artefato local ainda não inicia o Job Databricks;
 portanto, a passagem ADF -> Databricks continua exigindo uma ação separada do
 operador.
 
-### 3.4 **Ingestão de Dados** streaming
+### 3.5 **Ingestão de Dados** streaming
 
 Produção usa exatamente um namespace `evhns-healthlake-prod-brs-01` Standard,
 um hub `evh-vitals-prod`, 1 TU, duas partições e três dias de retenção. Capture,
@@ -254,7 +523,7 @@ por `event_id` com watermark de 25 horas, uma hora além da janela DQ de atraso
 aceita. As Gold publicam janelas de cinco
 minutos por paciente e uma hora para a população.
 
-### 3.5 Camada Raw
+### 3.6 Camada Raw
 
 A Raw no ADLS preserva os bytes copiados do S3:
 
@@ -269,7 +538,7 @@ abfss://raw@<storage-account>.dfs.core.windows.net/
 
 Essa zona permite auditoria e reprocessamento somente enquanto os objetos originais forem preservados. Ela é tratada conceitualmente como append-only, mas o uploader e o ADF podem substituir o mesmo caminho. Políticas de imutabilidade, versionamento, lifecycle e retenção são recomendações de produção e não estão declaradas no repositório.
 
-### 3.6 Camada Bronze
+### 3.7 Camada Bronze
 
 [`ingestion.py`](databricks/src/bronze/ingestion.py) usa `spark.readStream.format("cloudFiles")` para ler incrementalmente os cinco diretórios. A configuração:
 
@@ -292,7 +561,7 @@ Essa zona permite auditoria e reprocessamento somente enquanto os objetos origin
 
 O Auto Loader mantém estado de ingestão e evita reler arquivos já processados dentro do checkpoint gerenciado pelo Lakeflow. A Bronze é histórica e recebe snapshots completos de várias datas. Como `cloudFiles.allowOverwrites` não está configurado, o desenho seguro é publicar um caminho imutável por execução; replay no mesmo path exige política explícita de overwrite, deduplicação e reconciliação.
 
-### 3.7 Gate de qualidade Bronze -> Silver
+### 3.8 Gate de qualidade Bronze -> Silver
 
 O Job DQX recebe uma `odate` explícita, filtra somente essa partição em cada tabela Bronze e falha se qualquer uma das cinco entidades não tiver linhas. Antes de aplicar regras, ele usa as mesmas transformações puras da Silver para deduplicar, tipar, normalizar e mascarar os dados. Essa limpeza também remove registros incompletos em campos não-chave antes do DQ; a reconciliação fica registrada como `removed_by_cleaning = input_rows - checked_rows` dentro de `violation_summary`. Só então o DQX divide linhas válidas e inválidas, mascara PII de pacientes na quarentena `_v2` e grava métricas em `<catalog>.observability.dq_run_metrics`. O sufixo `_v2` separa o schema tipado pós-limpeza das quarentenas raw legadas, incompatíveis para `mergeSchema`.
 
@@ -306,7 +575,7 @@ O Job DQX recebe uma `odate` explícita, filtra somente essa partição em cada 
 
 Depois da limpeza, qualquer violação restante gera status `FAILED`, persiste a quarentena e lança erro para impedir a Silver; nenhuma fração válida da tabela é promovida. O split válido nunca é salvo diretamente. Somente quando as cinco tabelas passam o Job atualiza `<catalog>.observability.dq_promotion_control`; esse é o único sinal consumido pela Silver. Assim, as cinco tabelas são promovidas juntas ou nenhuma é atualizada. O perfil `clean` sustenta o caminho de sucesso, enquanto `chaos` demonstra deliberadamente quarentena e bloqueio.
 
-### 3.8 Camada Silver
+### 3.9 Camada Silver
 
 [`transforms.py`](databricks/src/silver/transforms.py) trata cada `odate` como snapshot completo e lê apenas a data aprovada para `bronze_to_silver` em `dq_promotion_control`. O módulo compartilhado [`cleaning.py`](databricks/src/silver/cleaning.py) repete deterministicamente a mesma deduplicação, tipagem e normalização validadas pelo gate. Expectations `expect_or_fail` interrompem a materialização inteira se o contrato de qualquer view for violado.
 
@@ -320,7 +589,7 @@ Depois da limpeza, qualquer violação restante gera status `FAILED`, persiste a
 
 As views mantêm `snapshot_date`, `_source_file` e `_ingested_at` para rastreabilidade. O modelo tem semântica de current snapshot análoga a SCD Type 1, sem implementar uma dimensão SCD por `MERGE`; não mantém histórico dimensional Type 2.
 
-### 3.9 **Mascaramento de Dados** e minimização
+### 3.10 **Mascaramento de Dados** e minimização
 
 Os identificadores diretos recebem máscaras de apresentação ao entrar na Silver e antes de uma linha de paciente ser gravada na quarentena:
 
@@ -333,7 +602,7 @@ Os identificadores diretos recebem máscaras de apresentação ao entrar na Silv
 
 A Gold exclui nome, CPF, e-mail e telefone da dimensão de pacientes. Ainda assim, isso é minimização e redação de identificadores, não prova de anonimização: `patient_id`, localização, nascimento, eventos assistenciais e combinações de atributos podem permitir reidentificação. A dimensão de médicos também mantém `doctor_name`. Portanto, a Gold não é livre de dados pessoais nem anônima; Raw e Bronze mantêm PII integral para finalidades técnicas controladas. Uma avaliação formal deve considerar base legal, finalidade, necessidade, retenção, risco de reidentificação, direitos do titular e controles organizacionais.
 
-### 3.10 Gate de qualidade Silver -> Gold
+### 3.11 Gate de qualidade Silver -> Gold
 
 O segundo gate filtra as views tipadas pela mesma `odate` recebida pelo Job e repete verificações essenciais:
 
@@ -347,7 +616,7 @@ O segundo gate filtra as views tipadas pela mesma `odate` recebida pelo Job e re
 
 Apenas quando as cinco views passam o controle de promoção de `silver_to_gold` é atualizado e o Job executa a Gold. A fact usa `expect_or_fail` para que uma data de atendimento ausente aborte a atualização inteira, em vez de salvar uma tabela parcialmente filtrada.
 
-### 3.11 Camada Gold
+### 3.12 Camada Gold
 
 [`marts.py`](databricks/src/gold/marts.py) publica um esquema estrela:
 
@@ -377,7 +646,7 @@ Fórmulas do KPI:
 - `total_cost = sum(cost)`
 - `discharge_rate = avg(cast(is_discharged as double))`; como `avg` ignora nulos, o denominador contém somente atendimentos cuja flag de alta é conhecida
 
-### 3.12 **Segurança de Dados**
+### 3.13 **Segurança de Dados**
 
 Controles presentes no código e na configuração:
 
@@ -414,7 +683,7 @@ pelo Bundle; esses itens são pré-requisitos administrativos separados.
 
 Para uso real, também são necessários: bloqueio de acesso público, TLS obrigatório, criptografia em repouso validada, private endpoints/VNet, rotação de credenciais, logs de auditoria, política de retenção/expurgo, segregação de funções, resposta a incidentes e avaliação de impacto. O uso de serviços que criptografam por padrão não substitui a verificação da configuração efetiva.
 
-### 3.13 **Observabilidade**
+### 3.14 **Observabilidade**
 
 | Sinal | Origem | Uso |
 | --- | --- | --- |
@@ -450,7 +719,7 @@ com a Pipeline `IDLE`, o Databricks não conhece eventos que chegaram depois.
 Ainda não há custo financeiro/DBUs no painel, backlog realmente atual do Event
 Hubs, atraso S3/ADF ponta a ponta nem SLO formal.
 
-### 3.14 **Escalabilidade**
+### 3.15 **Escalabilidade**
 
 Mecanismos existentes:
 
@@ -474,7 +743,7 @@ Estratégias para crescimento:
 
 O case ainda não comprova capacidade de grande volume por teste de carga. O DQX agora filtra a partição-alvo antes da limpeza e das janelas de unicidade, evitando calcular sobre toda a Bronze histórica. Ainda é necessário medir e reduzir ações Spark repetidas dentro dessa partição, compactar arquivos pequenos e definir metas mensuráveis de volume, latência, custo e disponibilidade.
 
-### 3.15 CI/CD e ambientes
+### 3.16 CI/CD e ambientes
 
 | Workflow | Gatilho | Ações |
 | --- | --- | --- |
