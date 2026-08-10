@@ -1,0 +1,200 @@
+{
+  "datasets": [
+    {
+      "displayName": "Pipeline updates (90 days)",
+      "name": "a90b1c2d",
+      "query": "WITH update_slices AS (\n  SELECT\n    update_id,\n    MAX(update_type) AS update_type,\n    MAX(trigger_type) AS trigger_type,\n    MIN(period_start_time) AS started_at,\n    MAX(period_end_time) AS finished_at,\n    COALESCE(MAX(result_state), 'RUNNING') AS result_state,\n    GREATEST(COUNT(DISTINCT request_id) - 1, 0) AS restart_count,\n    SUM(TIMESTAMPDIFF(SECOND, period_start_time, period_end_time)) AS duration_seconds\n  FROM system.lakeflow.pipeline_update_timeline\n  WHERE workspace_id = '7405616424934600'\n    AND pipeline_id = 'e4b0ab07-e47a-47c4-9394-96ef356d0606'\n    AND period_start_time >= CURRENT_TIMESTAMP() - INTERVAL 90 DAYS\n  GROUP BY update_id\n)\nSELECT update_id, update_type, trigger_type, started_at, finished_at, result_state, restart_count, duration_seconds\nFROM update_slices\nORDER BY started_at DESC"
+    },
+    {
+      "displayName": "Streaming job runs (90 days)",
+      "name": "b90c2d3e",
+      "query": "WITH current_job AS (\n  SELECT paused\n  FROM system.lakeflow.jobs\n  WHERE workspace_id = '7405616424934600'\n    AND job_id = '1081221935414873'\n  QUALIFY ROW_NUMBER() OVER (PARTITION BY workspace_id, job_id ORDER BY change_time DESC) = 1\n), run_slices AS (\n  SELECT\n    run_id,\n    MAX(run_type) AS run_type,\n    MAX(trigger_type) AS trigger_type,\n    MIN(period_start_time) AS started_at,\n    MAX(period_end_time) AS finished_at,\n    COALESCE(MAX(result_state), 'RUNNING') AS result_state,\n    MAX(termination_code) AS termination_code,\n    SUM(TIMESTAMPDIFF(SECOND, period_start_time, period_end_time)) AS duration_seconds\n  FROM system.lakeflow.job_run_timeline\n  WHERE workspace_id = '7405616424934600'\n    AND job_id = '1081221935414873'\n    AND period_start_time >= CURRENT_TIMESTAMP() - INTERVAL 90 DAYS\n  GROUP BY run_id\n)\nSELECT r.run_id, r.run_type, r.trigger_type, r.started_at, r.finished_at, r.result_state, r.termination_code, r.duration_seconds, j.paused AS schedule_paused\nFROM run_slices r\nCROSS JOIN current_job j\nORDER BY r.started_at DESC"
+    },
+    {
+      "displayName": "Latest update flow metrics",
+      "name": "c90d3e4f",
+      "query": "WITH latest_update AS (\n  SELECT origin.update_id\n  FROM vital_streaming_pipeline_events\n  WHERE origin.pipeline_id = 'e4b0ab07-e47a-47c4-9394-96ef356d0606'\n    AND origin.update_id IS NOT NULL\n  QUALIFY ROW_NUMBER() OVER (ORDER BY timestamp DESC) = 1\n), flow_progress AS (\n  SELECT\n    e.origin.update_id AS update_id,\n    COALESCE(e.origin.flow_name, e.origin.dataset_name) AS flow_name,\n    e.timestamp AS observed_at,\n    GET_JSON_OBJECT(e.details, '$.flow_progress.status') AS flow_status,\n    TRY_CAST(GET_JSON_OBJECT(e.details, '$.flow_progress.metrics.num_output_rows') AS BIGINT) AS output_rows,\n    TRY_CAST(GET_JSON_OBJECT(e.details, '$.flow_progress.metrics.backlog_bytes') AS BIGINT) AS backlog_bytes,\n    TRY_CAST(GET_JSON_OBJECT(e.details, '$.flow_progress.data_quality.dropped_records') AS BIGINT) AS dropped_records\n  FROM vital_streaming_pipeline_events e\n  JOIN latest_update u ON e.origin.update_id = u.update_id\n  WHERE e.event_type = 'flow_progress'\n    AND COALESCE(e.origin.flow_name, e.origin.dataset_name) IS NOT NULL\n)\nSELECT\n  update_id,\n  flow_name,\n  MAX_BY(flow_status, observed_at) AS final_status,\n  MIN(observed_at) AS started_at,\n  MAX(observed_at) AS observed_at,\n  SUM(COALESCE(output_rows, 0)) AS output_rows,\n  SUM(COALESCE(dropped_records, 0)) AS dropped_records,\n  MAX_BY(backlog_bytes, observed_at) FILTER (WHERE backlog_bytes IS NOT NULL) AS backlog_bytes_at_last_refresh,\n  TIMESTAMPDIFF(MINUTE, MAX(observed_at), CURRENT_TIMESTAMP()) AS observation_age_minutes\nFROM flow_progress\nGROUP BY update_id, flow_name\nORDER BY flow_name"
+    },
+    {
+      "displayName": "Latest update expectation metrics",
+      "name": "d90e4f50",
+      "query": "WITH latest_update AS (\n  SELECT origin.update_id\n  FROM vital_streaming_pipeline_events\n  WHERE origin.pipeline_id = 'e4b0ab07-e47a-47c4-9394-96ef356d0606'\n    AND origin.update_id IS NOT NULL\n  QUALIFY ROW_NUMBER() OVER (ORDER BY timestamp DESC) = 1\n)\nSELECT\n  e.origin.update_id AS update_id,\n  expectation.dataset AS dataset,\n  expectation.name AS dq_rule,\n  SUM(expectation.passed_records) AS passed_records,\n  SUM(expectation.failed_records) AS failed_records\nFROM vital_streaming_pipeline_events e\nJOIN latest_update u ON e.origin.update_id = u.update_id\nLATERAL VIEW EXPLODE(\n  FROM_JSON(\n    GET_JSON_OBJECT(e.details, '$.flow_progress.data_quality.expectations'),\n    'ARRAY<STRUCT<name:STRING,dataset:STRING,passed_records:BIGINT,failed_records:BIGINT>>'\n  )\n) exploded AS expectation\nWHERE e.event_type = 'flow_progress'\nGROUP BY e.origin.update_id, expectation.dataset, expectation.name\nORDER BY failed_records DESC, dq_rule"
+    },
+    {
+      "displayName": "Current streaming freshness",
+      "name": "e90f5061",
+      "query": "SELECT\n  CURRENT_TIMESTAMP() AS observed_at,\n  MAX(event_time) AS latest_event_time,\n  MAX(eventhub_enqueued_at) AS latest_eventhub_enqueued_at,\n  MAX(ingested_at) AS latest_bronze_ingested_at,\n  TIMESTAMPDIFF(MINUTE, MAX(event_time), CURRENT_TIMESTAMP()) AS event_age_minutes,\n  TIMESTAMPDIFF(MINUTE, MAX(ingested_at), CURRENT_TIMESTAMP()) AS ingestion_age_minutes\nFROM silver.vital_events\nWHERE event_time >= CURRENT_TIMESTAMP() - INTERVAL 90 DAYS"
+    },
+    {
+      "displayName": "Streaming latency by hour (7 days)",
+      "name": "f9016172",
+      "query": "SELECT\n  DATE_TRUNC('HOUR', eventhub_enqueued_at) AS observed_hour,\n  COUNT(*) AS event_count,\n  ROUND(PERCENTILE_APPROX(TIMESTAMPDIFF(MILLISECOND, produced_at, eventhub_enqueued_at) / 1000.0, 0.95), 2) AS producer_to_hub_p95_seconds,\n  ROUND(PERCENTILE_APPROX(TIMESTAMPDIFF(MILLISECOND, eventhub_enqueued_at, ingested_at) / 1000.0, 0.95), 2) AS hub_to_bronze_p95_seconds,\n  ROUND(PERCENTILE_APPROX(TIMESTAMPDIFF(MILLISECOND, produced_at, ingested_at) / 1000.0, 0.95), 2) AS end_to_end_p95_seconds\nFROM silver.vital_events\nWHERE event_time >= CURRENT_TIMESTAMP() - INTERVAL 8 DAYS\n  AND eventhub_enqueued_at >= CURRENT_TIMESTAMP() - INTERVAL 7 DAYS\nGROUP BY DATE_TRUNC('HOUR', eventhub_enqueued_at)\nORDER BY observed_hour"
+    },
+    {
+      "displayName": "Streaming quarantine rules (30 days)",
+      "name": "0a126283",
+      "query": "SELECT\n  dq_rule,\n  COUNT(*) AS violated_events,\n  MAX(eventhub_enqueued_at) AS last_violation_at\nFROM quarantine.vital_events\nLATERAL VIEW EXPLODE(_dq_errors) exploded AS dq_rule\nWHERE eventhub_enqueued_at >= CURRENT_TIMESTAMP() - INTERVAL 30 DAYS\nGROUP BY dq_rule\nORDER BY violated_events DESC, dq_rule"
+    },
+    {
+      "displayName": "Latest batch DQ run per odate and stage",
+      "name": "1b237394",
+      "query": "WITH latest_runs AS (\n  SELECT dq_stage, odate, MAX_BY(dq_run_id, checked_at) AS dq_run_id\n  FROM dq_run_metrics\n  WHERE checked_at >= CURRENT_TIMESTAMP() - INTERVAL 365 DAYS\n  GROUP BY dq_stage, odate\n)\nSELECT\n  m.checked_at,\n  m.odate,\n  m.dq_stage,\n  m.dq_run_id,\n  m.source_table,\n  m.input_rows,\n  m.checked_rows,\n  m.input_rows - m.checked_rows AS removed_by_cleaning,\n  m.valid_rows,\n  m.quarantined_rows,\n  m.status,\n  (m.input_rows >= m.checked_rows AND m.checked_rows = m.valid_rows + m.quarantined_rows) AS reconciliation_ok,\n  (p.dq_run_id IS NOT NULL) AS promotion_approved\nFROM dq_run_metrics m\nJOIN latest_runs r\n  ON m.dq_stage = r.dq_stage\n AND m.odate = r.odate\n AND m.dq_run_id = r.dq_run_id\nLEFT JOIN dq_promotion_control p\n  ON m.dq_stage = p.dq_stage\n AND m.odate = p.odate\n AND m.dq_run_id = p.dq_run_id\nORDER BY m.odate DESC, m.dq_stage, m.source_table"
+    }
+  ],
+  "pages": [
+    {
+      "name": "2c3484a5",
+      "displayName": "Operação streaming",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layout": [
+        {
+          "position": {"x": 0, "y": 0, "width": 6, "height": 2},
+          "widget": {
+            "name": "3d4595b6",
+            "multilineTextboxSpec": {
+              "lines": [
+                "# HealthLake | Operação streaming",
+                "Sob demanda: abrir ou atualizar este painel inicia o SQL Warehouse. Não há refresh agendado. Backlog é o valor observado no último refresh da Pipeline, não o backlog atual do Event Hubs."
+              ]
+            }
+          }
+        },
+        {
+          "position": {"x": 0, "y": 2, "width": 2, "height": 3},
+          "widget": {
+            "name": "4e56a6c7",
+            "queries": [{"name": "main_query", "query": {"datasetName": "a90b1c2d", "disaggregated": false, "fields": [{"expression": "COUNT_IF(UPPER(`result_state`) IN ('FAILED', 'CANCELED'))", "name": "failed_updates"}]}}],
+            "spec": {"version": 2, "widgetType": "counter", "encodings": {"value": {"fieldName": "failed_updates", "displayName": "Falhas"}}, "frame": {"showTitle": true, "title": "Updates com falha (90d)"}}
+          }
+        },
+        {
+          "position": {"x": 2, "y": 2, "width": 2, "height": 3},
+          "widget": {
+            "name": "5f67b7d8",
+            "queries": [{"name": "main_query", "query": {"datasetName": "a90b1c2d", "disaggregated": false, "fields": [{"expression": "MAX_BY(`duration_seconds`, `started_at`)", "name": "duration_seconds"}]}}],
+            "spec": {"version": 2, "widgetType": "counter", "encodings": {"value": {"fieldName": "duration_seconds", "displayName": "Segundos"}}, "frame": {"showTitle": true, "title": "Duração do último update"}}
+          }
+        },
+        {
+          "position": {"x": 4, "y": 2, "width": 2, "height": 3},
+          "widget": {
+            "name": "6078c8e9",
+            "queries": [{"name": "main_query", "query": {"datasetName": "b90c2d3e", "disaggregated": false, "fields": [{"expression": "COUNT_IF(UPPER(`result_state`) NOT IN ('SUCCEEDED', 'SUCCESS', 'RUNNING'))", "name": "failed_runs"}]}}],
+            "spec": {"version": 2, "widgetType": "counter", "encodings": {"value": {"fieldName": "failed_runs", "displayName": "Falhas"}}, "frame": {"showTitle": true, "title": "Jobs com falha (90d)"}}
+          }
+        },
+        {
+          "position": {"x": 0, "y": 5, "width": 6, "height": 5},
+          "widget": {
+            "name": "7189d9fa",
+            "queries": [{"name": "main_query", "query": {"datasetName": "a90b1c2d", "disaggregated": true, "fields": [{"expression": "`started_at`", "name": "started_at"}, {"expression": "`result_state`", "name": "result_state"}, {"expression": "`trigger_type`", "name": "trigger_type"}, {"expression": "`duration_seconds`", "name": "duration_seconds"}, {"expression": "`restart_count`", "name": "restart_count"}, {"expression": "`update_id`", "name": "update_id"}]}}],
+            "spec": {"version": 1, "widgetType": "table", "encodings": {"columns": [{"fieldName": "started_at", "displayName": "Início", "type": "timestamp", "visible": true}, {"fieldName": "result_state", "displayName": "Estado", "type": "string", "visible": true}, {"fieldName": "trigger_type", "displayName": "Trigger", "type": "string", "visible": true}, {"fieldName": "duration_seconds", "displayName": "Duração (s)", "type": "integer", "visible": true}, {"fieldName": "restart_count", "displayName": "Reinícios", "type": "integer", "visible": true}, {"fieldName": "update_id", "displayName": "Update ID", "type": "string", "visible": true}]}, "frame": {"showTitle": true, "title": "Histórico da Pipeline"}}
+          }
+        },
+        {
+          "position": {"x": 0, "y": 10, "width": 3, "height": 6},
+          "widget": {
+            "name": "829aea0b",
+            "queries": [{"name": "main_query", "query": {"datasetName": "c90d3e4f", "disaggregated": false, "fields": [{"expression": "`flow_name`", "name": "flow_name"}, {"expression": "SUM(`output_rows`)", "name": "output_rows"}]}}],
+            "spec": {"version": 3, "widgetType": "bar", "encodings": {"x": {"fieldName": "flow_name", "displayName": "Flow", "scale": {"type": "categorical"}}, "y": {"fieldName": "output_rows", "displayName": "Linhas", "scale": {"type": "quantitative"}}}, "frame": {"showTitle": true, "title": "Saída por flow no último update"}}
+          }
+        },
+        {
+          "position": {"x": 3, "y": 10, "width": 3, "height": 6},
+          "widget": {
+            "name": "93abfb1c",
+            "queries": [{"name": "main_query", "query": {"datasetName": "c90d3e4f", "disaggregated": true, "fields": [{"expression": "`flow_name`", "name": "flow_name"}, {"expression": "`final_status`", "name": "final_status"}, {"expression": "`output_rows`", "name": "output_rows"}, {"expression": "`dropped_records`", "name": "dropped_records"}, {"expression": "`backlog_bytes_at_last_refresh`", "name": "backlog_bytes"}, {"expression": "`observed_at`", "name": "observed_at"}, {"expression": "`observation_age_minutes`", "name": "observation_age_minutes"}]}}],
+            "spec": {"version": 1, "widgetType": "table", "encodings": {"columns": [{"fieldName": "flow_name", "displayName": "Flow", "type": "string", "visible": true}, {"fieldName": "final_status", "displayName": "Estado", "type": "string", "visible": true}, {"fieldName": "output_rows", "displayName": "Saída", "type": "integer", "visible": true}, {"fieldName": "dropped_records", "displayName": "Descartadas", "type": "integer", "visible": true}, {"fieldName": "backlog_bytes", "displayName": "Backlog no último refresh (bytes)", "type": "integer", "visible": true}, {"fieldName": "observed_at", "displayName": "Observado em", "type": "timestamp", "visible": true}, {"fieldName": "observation_age_minutes", "displayName": "Idade da observação (min)", "type": "integer", "visible": true}]}, "frame": {"showTitle": true, "title": "Reconciliação e backlog observado"}}
+          }
+        },
+        {
+          "position": {"x": 0, "y": 16, "width": 6, "height": 5},
+          "widget": {
+            "name": "a4bc0c2d",
+            "queries": [{"name": "main_query", "query": {"datasetName": "b90c2d3e", "disaggregated": true, "fields": [{"expression": "`started_at`", "name": "started_at"}, {"expression": "`result_state`", "name": "result_state"}, {"expression": "`termination_code`", "name": "termination_code"}, {"expression": "`duration_seconds`", "name": "duration_seconds"}, {"expression": "`schedule_paused`", "name": "schedule_paused"}, {"expression": "`run_id`", "name": "run_id"}]}}],
+            "spec": {"version": 1, "widgetType": "table", "encodings": {"columns": [{"fieldName": "started_at", "displayName": "Início", "type": "timestamp", "visible": true}, {"fieldName": "result_state", "displayName": "Estado", "type": "string", "visible": true}, {"fieldName": "termination_code", "displayName": "Término", "type": "string", "visible": true}, {"fieldName": "duration_seconds", "displayName": "Duração (s)", "type": "integer", "visible": true}, {"fieldName": "schedule_paused", "displayName": "Agenda pausada", "type": "boolean", "visible": true}, {"fieldName": "run_id", "displayName": "Run ID", "type": "string", "visible": true}]}, "frame": {"showTitle": true, "title": "Execuções do Job streaming"}}
+          }
+        }
+      ]
+    },
+    {
+      "name": "b5cd1d3e",
+      "displayName": "Qualidade e frescor",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layout": [
+        {
+          "position": {"x": 0, "y": 0, "width": 6, "height": 2},
+          "widget": {
+            "name": "c6de2e4f",
+            "multilineTextboxSpec": {
+              "lines": [
+                "# HealthLake | Qualidade e frescor",
+                "Métricas streaming são separadas dos gates DQ batch. Nenhum dataset contém payload bruto, mensagem de erro ou identificador de paciente."
+              ]
+            }
+          }
+        },
+        {
+          "position": {"x": 0, "y": 2, "width": 2, "height": 3},
+          "widget": {
+            "name": "d7ef3f50",
+            "queries": [{"name": "main_query", "query": {"datasetName": "e90f5061", "disaggregated": false, "fields": [{"expression": "MAX(`event_age_minutes`)", "name": "event_age_minutes"}]}}],
+            "spec": {"version": 2, "widgetType": "counter", "encodings": {"value": {"fieldName": "event_age_minutes", "displayName": "Minutos"}}, "frame": {"showTitle": true, "title": "Idade do evento mais recente"}}
+          }
+        },
+        {
+          "position": {"x": 2, "y": 2, "width": 2, "height": 3},
+          "widget": {
+            "name": "e8f04061",
+            "queries": [{"name": "main_query", "query": {"datasetName": "d90e4f50", "disaggregated": false, "fields": [{"expression": "SUM(`failed_records`)", "name": "failed_records"}]}}],
+            "spec": {"version": 2, "widgetType": "counter", "encodings": {"value": {"fieldName": "failed_records", "displayName": "Falhas"}}, "frame": {"showTitle": true, "title": "DQ streaming no último update"}}
+          }
+        },
+        {
+          "position": {"x": 4, "y": 2, "width": 2, "height": 3},
+          "widget": {
+            "name": "f9015172",
+            "queries": [{"name": "main_query", "query": {"datasetName": "1b237394", "disaggregated": false, "fields": [{"expression": "COUNT_IF(`status` = 'FAILED')", "name": "failed_tables"}]}}],
+            "spec": {"version": 2, "widgetType": "counter", "encodings": {"value": {"fieldName": "failed_tables", "displayName": "Tabelas"}}, "frame": {"showTitle": true, "title": "Tabelas DQ batch com falha"}}
+          }
+        },
+        {
+          "position": {"x": 0, "y": 5, "width": 3, "height": 6},
+          "widget": {
+            "name": "0b126284",
+            "queries": [{"name": "main_query", "query": {"datasetName": "d90e4f50", "disaggregated": false, "fields": [{"expression": "`dq_rule`", "name": "dq_rule"}, {"expression": "SUM(`failed_records`)", "name": "failed_records"}]}}],
+            "spec": {"version": 3, "widgetType": "bar", "encodings": {"x": {"fieldName": "dq_rule", "displayName": "Regra", "scale": {"type": "categorical"}}, "y": {"fieldName": "failed_records", "displayName": "Falhas", "scale": {"type": "quantitative"}}}, "frame": {"showTitle": true, "title": "Expectations com falha no último update"}}
+          }
+        },
+        {
+          "position": {"x": 3, "y": 5, "width": 3, "height": 6},
+          "widget": {
+            "name": "1c237395",
+            "queries": [{"name": "main_query", "query": {"datasetName": "0a126283", "disaggregated": true, "fields": [{"expression": "`dq_rule`", "name": "dq_rule"}, {"expression": "`violated_events`", "name": "violated_events"}, {"expression": "`last_violation_at`", "name": "last_violation_at"}]}}],
+            "spec": {"version": 1, "widgetType": "table", "encodings": {"columns": [{"fieldName": "dq_rule", "displayName": "Regra", "type": "string", "visible": true}, {"fieldName": "violated_events", "displayName": "Eventos violados (30d)", "type": "integer", "visible": true}, {"fieldName": "last_violation_at", "displayName": "Última violação", "type": "timestamp", "visible": true}]}, "frame": {"showTitle": true, "title": "Quarentena streaming por regra"}}
+          }
+        },
+        {
+          "position": {"x": 0, "y": 11, "width": 6, "height": 5},
+          "widget": {
+            "name": "2d3484a6",
+            "queries": [{"name": "main_query", "query": {"datasetName": "f9016172", "disaggregated": true, "fields": [{"expression": "`observed_hour`", "name": "observed_hour"}, {"expression": "`event_count`", "name": "event_count"}, {"expression": "`producer_to_hub_p95_seconds`", "name": "producer_to_hub_p95_seconds"}, {"expression": "`hub_to_bronze_p95_seconds`", "name": "hub_to_bronze_p95_seconds"}, {"expression": "`end_to_end_p95_seconds`", "name": "end_to_end_p95_seconds"}]}}],
+            "spec": {"version": 1, "widgetType": "table", "encodings": {"columns": [{"fieldName": "observed_hour", "displayName": "Hora", "type": "timestamp", "visible": true}, {"fieldName": "event_count", "displayName": "Eventos", "type": "integer", "visible": true}, {"fieldName": "producer_to_hub_p95_seconds", "displayName": "Producer→Hub p95 (s)", "type": "float", "visible": true}, {"fieldName": "hub_to_bronze_p95_seconds", "displayName": "Hub→Bronze p95 (s)", "type": "float", "visible": true}, {"fieldName": "end_to_end_p95_seconds", "displayName": "Ponta a ponta p95 (s)", "type": "float", "visible": true}]}, "frame": {"showTitle": true, "title": "Latência streaming por hora (7d)"}}
+          }
+        },
+        {
+          "position": {"x": 0, "y": 16, "width": 6, "height": 7},
+          "widget": {
+            "name": "3e4595b7",
+            "queries": [{"name": "main_query", "query": {"datasetName": "1b237394", "disaggregated": true, "fields": [{"expression": "`odate`", "name": "odate"}, {"expression": "`dq_stage`", "name": "dq_stage"}, {"expression": "`source_table`", "name": "source_table"}, {"expression": "`input_rows`", "name": "input_rows"}, {"expression": "`checked_rows`", "name": "checked_rows"}, {"expression": "`removed_by_cleaning`", "name": "removed_by_cleaning"}, {"expression": "`valid_rows`", "name": "valid_rows"}, {"expression": "`quarantined_rows`", "name": "quarantined_rows"}, {"expression": "`status`", "name": "status"}, {"expression": "`reconciliation_ok`", "name": "reconciliation_ok"}, {"expression": "`promotion_approved`", "name": "promotion_approved"}]}}],
+            "spec": {"version": 1, "widgetType": "table", "encodings": {"columns": [{"fieldName": "odate", "displayName": "odate", "type": "date", "visible": true}, {"fieldName": "dq_stage", "displayName": "Gate", "type": "string", "visible": true}, {"fieldName": "source_table", "displayName": "Tabela", "type": "string", "visible": true}, {"fieldName": "input_rows", "displayName": "Entrada", "type": "integer", "visible": true}, {"fieldName": "checked_rows", "displayName": "Checadas", "type": "integer", "visible": true}, {"fieldName": "removed_by_cleaning", "displayName": "Removidas na limpeza", "type": "integer", "visible": true}, {"fieldName": "valid_rows", "displayName": "Válidas", "type": "integer", "visible": true}, {"fieldName": "quarantined_rows", "displayName": "Quarentena", "type": "integer", "visible": true}, {"fieldName": "status", "displayName": "DQ", "type": "string", "visible": true}, {"fieldName": "reconciliation_ok", "displayName": "Reconciliação", "type": "boolean", "visible": true}, {"fieldName": "promotion_approved", "displayName": "Promoção aprovada", "type": "boolean", "visible": true}]}, "frame": {"showTitle": true, "title": "Último gate batch por odate e estágio"}}
+          }
+        }
+      ]
+    }
+  ],
+  "uiSettings": {
+    "theme": {"widgetHeaderAlignment": "ALIGNMENT_UNSPECIFIED"},
+    "applyModeEnabled": false
+  }
+}

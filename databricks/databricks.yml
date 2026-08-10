@@ -10,13 +10,39 @@ variables:
     description: Unity Catalog that owns all HealthLake tables.
     default: healthlake_dev
   raw_root:
-    description: Governed ADLS landing path registered by ext_healthlake_dev_raw.
-    default: abfss://raw@sthealthdatalake001.dfs.core.windows.net
+    description: Environment-specific governed ADLS landing path.
   dq_alert_email:
     description: Recipient notified when a DQX quality gate quarantines data.
     default: cardosoestevo@yahoo.com.br
+  logic_app_notification_destination_id:
+    description: Production Databricks webhook destination backed by the Logic App request trigger.
+    default: disabled
   run_as_service_principal_name:
     description: Application ID of the environment-specific pipeline service principal.
+  deployment_root_principal:
+    description: Principal that owns the canonical production Bundle state directory.
+    default: unused
+  eventhub_bootstrap_servers:
+    description: Kafka bootstrap endpoint for the production Event Hubs namespace.
+    default: disabled.invalid:9093
+  eventhub_name:
+    description: Event Hub entity consumed by the vital-signs pipeline.
+    default: disabled
+  eventhub_consumer_group:
+    description: Dedicated Kafka consumer group for the production pipeline.
+    default: disabled
+  eventhub_service_credential:
+    description: Unity Catalog service credential backed by a managed identity.
+    default: disabled
+  streaming_max_offsets_per_trigger:
+    description: Cost and back-pressure guardrail for each Kafka micro-batch.
+    default: '10000'
+  streaming_schedule_cron:
+    description: Quartz schedule used only after the production canary is approved.
+    default: '0 0 * * * ?'
+  streaming_schedule_pause_status:
+    description: Keeps the streaming schedule paused until explicitly activated.
+    default: PAUSED
 
 targets:
   dev:
@@ -25,12 +51,21 @@ targets:
     workspace:
       host: https://adb-7405611974072786.6.azuredatabricks.net
     variables:
+      raw_root: abfss://raw@sthealthdatalake001.dfs.core.windows.net
       run_as_service_principal_name: 03b5799c-110f-484f-8b1b-e3fd88809c64
   prod:
     mode: production
     workspace:
-      # Resolves to the CI Service Principal's private bundle directory.
-      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+      host: https://adb-7405616424934600.0.azuredatabricks.net
+      # Keep one canonical state path whether CI or an administrator performs a recovery deploy.
+      root_path: /Workspace/Users/${var.deployment_root_principal}/.bundle/${bundle.name}/${bundle.target}
     variables:
       catalog: healthlake_prod
+      raw_root: abfss://raw@sthlkprodbrs01.dfs.core.windows.net
       run_as_service_principal_name: bfeb3006-1824-4361-bacb-3697f6e33262
+      deployment_root_principal: bfeb3006-1824-4361-bacb-3697f6e33262
+      eventhub_bootstrap_servers: evhns-healthlake-prod-brs-01.servicebus.windows.net:9093
+      eventhub_name: evh-vitals-prod
+      eventhub_consumer_group: cg-healthlake-databricks-prod
+      eventhub_service_credential: svc_healthlake_prod_eventhubs_receiver
+      logic_app_notification_destination_id: 7d5d65e4-ec0d-4658-b40e-1924cef9f521

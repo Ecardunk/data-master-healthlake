@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:healthlake:contracts:vital-event:v1",
+  "title": "Patient vital signs event v1",
+  "description": "Version 1 contract emitted by the synthetic vital signs producer.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "event_type",
+    "patient_id",
+    "heart_rate_bpm",
+    "oxygen_saturation_pct",
+    "temperature_c",
+    "blood_pressure_systolic_mmhg",
+    "blood_pressure_diastolic_mmhg",
+    "event_time",
+    "produced_at",
+    "producer_run_id",
+    "source"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "event_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "event_type": {
+      "type": "string",
+      "const": "patient_vital_signs"
+    },
+    "patient_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "heart_rate_bpm": {
+      "type": "integer",
+      "minimum": 40,
+      "maximum": 180
+    },
+    "oxygen_saturation_pct": {
+      "type": "integer",
+      "minimum": 70,
+      "maximum": 100
+    },
+    "temperature_c": {
+      "type": "number",
+      "minimum": 35,
+      "maximum": 41
+    },
+    "blood_pressure_systolic_mmhg": {
+      "type": "integer",
+      "minimum": 90,
+      "maximum": 180
+    },
+    "blood_pressure_diastolic_mmhg": {
+      "type": "integer",
+      "minimum": 60,
+      "maximum": 120
+    },
+    "event_time": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$"
+    },
+    "produced_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$"
+    },
+    "producer_run_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

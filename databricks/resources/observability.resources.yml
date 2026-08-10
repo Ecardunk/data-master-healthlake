@@ -1,19 +1,29 @@
-resources:
-  sql_warehouses:
-    healthlake_observability_warehouse:
-      name: healthlake-observability-${bundle.target}
-      cluster_size: 2X-Small
-      warehouse_type: PRO
-      enable_serverless_compute: true
-      enable_photon: true
-      min_num_clusters: 1
-      max_num_clusters: 1
-      auto_stop_mins: 10
+targets:
+  prod:
+    resources:
+      sql_warehouses:
+        healthlake_observability_warehouse:
+          name: healthlake-observability-prod
+          cluster_size: 2X-Small
+          warehouse_type: PRO
+          enable_serverless_compute: true
+          enable_photon: true
+          min_num_clusters: 1
+          max_num_clusters: 1
+          auto_stop_mins: 10
 
-  dashboards:
-    healthlake_observability_dashboard:
-      display_name: HealthLake Observability - ${bundle.target}
-      file_path: ../src/dashboard/healthlake_observability.lvdash.json
-      warehouse_id: ${resources.sql_warehouses.healthlake_observability_warehouse.id}
-      dataset_catalog: ${var.catalog}
-      dataset_schema: observability
+      dashboards:
+        healthlake_observability_dashboard:
+          display_name: HealthLake Observability - prod
+          file_path: ../src/dashboard/healthlake_observability.prod.lvdash.json
+          warehouse_id: ${resources.sql_warehouses.healthlake_observability_warehouse.id}
+          dataset_catalog: ${var.catalog}
+          dataset_schema: observability
+          # Queries run with the production deploy service principal. Human
+          # groups can run only these curated datasets, not arbitrary SQL.
+          embed_credentials: true
+          permissions:
+            - level: CAN_RUN
+              group_name: data-engineering-admin
+            - level: CAN_RUN
+              group_name: data-engineering

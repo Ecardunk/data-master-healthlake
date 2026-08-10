@@ -88,9 +88,43 @@ jobs:
       - name: Validate production target
         working-directory: databricks
         run: databricks bundle validate --target prod
-      - name: Plan production target
+      - name: Plan production target and block destructive changes
         working-directory: databricks
-        run: databricks bundle plan --target prod
+        shell: bash
+        run: |
+          set -euo pipefail
+          plan_file="$RUNNER_TEMP/healthlake-prod-plan.json"
+
+          databricks bundle plan \
+            --target prod \
+            --output json > "$plan_file"
+
+          echo "Production plan actions:"
+          jq -r '
+            (.plan // {})
+            | to_entries[]
+            | select(.value.action != "skip")
+            | "\(.value.action) \(.key)"
+          ' "$plan_file"
+
+          destructive="$(
+            jq -r '
+              (.plan // {})
+              | to_entries[]
+              | select(.value.gone != true)
+              | select(
+                  .value.action == "delete" or
+                  .value.action == "recreate"
+                )
+              | "\(.value.action) \(.key)"
+            ' "$plan_file"
+          )"
+
+          if [[ -n "$destructive" ]]; then
+            echo "Destructive production plan blocked:" >&2
+            printf '%s\n' "$destructive" >&2
+            exit 1
+          fi
       - name: Deploy production target
         working-directory: databricks
         run: >-
@@ -104,11 +138,18 @@ jobs:
         working-directory: databricks
         shell: bash
         run: |
+          set -euo pipefail
           warehouse_id="$(
-            databricks bundle summary --target prod --output json |
+            databricks bundle summary --target prod --output json --force-pull |
               jq -er '.resources.sql_warehouses.healthlake_observability_warehouse.id'
           )"
-          databricks warehouses stop "$warehouse_id" >/dev/null
+          state="$(
+            databricks warehouses get "$warehouse_id" --output json |
+              jq -er '.state'
+          )"
+          if [[ "$state" != "STOPPED" ]]; then
+            databricks warehouses stop "$warehouse_id" >/dev/null
+          fi
           for attempt in $(seq 1 30); do
             state="$(
               databricks warehouses get "$warehouse_id" --output json |

@@ -1,0 +1,42 @@
+targets:
+  prod:
+    resources:
+      jobs:
+        healthlake_medallion_refresh:
+          health:
+            rules:
+              - metric: RUN_DURATION_SECONDS
+                op: GREATER_THAN
+                value: 7200
+          email_notifications:
+            on_failure:
+              - ${var.dq_alert_email}
+            on_duration_warning_threshold_exceeded:
+              - ${var.dq_alert_email}
+          webhook_notifications:
+            on_failure:
+              - id: ${var.logic_app_notification_destination_id}
+            on_duration_warning_threshold_exceeded:
+              - id: ${var.logic_app_notification_destination_id}
+          notification_settings:
+            no_alert_for_skipped_runs: true
+            no_alert_for_canceled_runs: true
+        healthlake_vitals_streaming_refresh:
+          health:
+            rules:
+              - metric: RUN_DURATION_SECONDS
+                op: GREATER_THAN
+                value: 900
+          email_notifications:
+            on_failure:
+              - ${var.dq_alert_email}
+            on_duration_warning_threshold_exceeded:
+              - ${var.dq_alert_email}
+          webhook_notifications:
+            on_failure:
+              - id: ${var.logic_app_notification_destination_id}
+            on_duration_warning_threshold_exceeded:
+              - id: ${var.logic_app_notification_destination_id}
+          notification_settings:
+            no_alert_for_skipped_runs: true
+            no_alert_for_canceled_runs: true

@@ -11,9 +11,6 @@ resources:
       parameters:
         - name: odate
           default: ''
-      email_notifications:
-        on_failure:
-          - ${var.dq_alert_email}
       tasks:
         - task_key: validate_bronze_snapshot
           max_retries: 0
@@ -47,9 +44,6 @@ resources:
       parameters:
         - name: odate
           default: ''
-      email_notifications:
-        on_failure:
-          - ${var.dq_alert_email}
       tasks:
         - task_key: validate_silver_snapshot
           max_retries: 0
