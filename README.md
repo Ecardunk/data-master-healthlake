@@ -1,15 +1,6 @@
 # Data Master - HealthLake
 
-Plataforma de engenharia de dados para o domínio de saúde, construída com
-Python, Amazon S3, Azure Data Factory, Azure Event Hubs, Azure Data Lake Storage
-Gen2 e Azure Databricks. O projeto implementa um fluxo batch mensal e um fluxo
-streaming triggered, ambos da geração sintética até produtos na camada Gold.
-
-> [!NOTE]
-> `HealthLake` é o nome deste projeto acadêmico. A solução não utiliza o serviço AWS HealthLake.
-
-> [!IMPORTANT]
-> Os registros são sintéticos e existem para demonstração técnica. Eles não devem ser interpretados como dados clínicos reais. O repositório contém os componentes do fluxo, mas ainda possui dependências externas e limitações conhecidas que impedem afirmar que um clone limpo executa o case inteiro sem preparação. Essas limitações e o plano para eliminá-las estão documentados de forma explícita.
+Plataforma de engenharia de dados desenvolvida com **Python, Amazon S3, Azure Data Factory, Azure Event Hubs, Azure Data Lake Storage Gen2 e Azure Databricks**. O projeto implementa uma arquitetura de dados com processamento **batch mensal e streaming**, cobrindo todo o ciclo de dados: desde a **geração sintética de dados de saúde e ingestão**, passando pelas etapas de processamento e transformação nas camadas **Bronze e Silver**, até a disponibilização de dados tratados e modelados na camada **Gold**, prontos para consumo analítico.
 
 ## Sumário
 
@@ -17,9 +8,8 @@ streaming triggered, ambos da geração sintética até produtos na camada Gold.
 2. [**Arquitetura de Solução e Arquitetura Técnica**](#2-arquitetura-de-solução-e-arquitetura-técnica)
 3. [**Explicação sobre o Case Desenvolvido**](#3-explicação-sobre-o-case-desenvolvido)
 4. [Guia de configuração e execução](#4-guia-de-configuração-e-execução)
-5. [Cobertura dos requisitos](#5-cobertura-dos-requisitos)
-6. [**Melhorias e Considerações Finais**](#6-melhorias-e-considerações-finais)
-7. [Referências](#7-referências)
+5. [**Próximos Passos e Considerações Finais**](#6-proximos-passos-e-considerações-finais)
+6. [**Referências**](#6-referencias)
 
 ---
 
@@ -34,8 +24,9 @@ O tema escolhido é saúde. A plataforma simula hospitais, pacientes, médicos, 
 ### 1.2 Objetivos técnicos
 
 - Gerar snapshots sintéticos em CSV, particionados por data lógica (`odate`), com seed, churn e anomalias controladas.
-- Demonstrar diferentes formatos e velocidades com CSV batch e JSONL de eventos.
 - Transportar o batch do Amazon S3 para o ADLS Gen2 por meio do Azure Data Factory (ADF).
+- Gerar eventos sintéticos em tempo quase real com um Producer em Python, simulando chegadas, alterações e anomalias de dados.
+- Publicar e distribuir os eventos por meio do Azure Event Hubs.
 - Organizar o processamento em Raw, Bronze, Silver e Gold, seguindo o padrão Medallion.
 - Usar Apache Spark Declarative Pipelines (SDP), Lakeflow Pipelines e Delta Lake para processamento distribuído e tabelas transacionais.
 - Bloquear promoções de camada quando regras críticas de qualidade falharem, mantendo métricas e quarentena.
@@ -53,132 +44,22 @@ A tabela `kpi_hospital_daily` permite responder, por hospital e dia:
 - Qual foi a taxa de alta entre atendimentos cuja flag é conhecida?
 - Como esses indicadores variam por tipo de hospital, estado e cidade?
 
-### 1.4 Escopo e não escopo
-
-| Dentro do escopo versionado | Fora do escopo atual |
-| --- | --- |
-| Geração sintética batch e de eventos | Prontuário eletrônico ou interoperabilidade FHIR |
-| Upload batch para S3 | Uso do serviço AWS HealthLake |
-| Cópia S3 -> ADLS pelo ADF | Provisionamento IaC completo de toda a topologia multicloud |
-| Bronze, Silver e Gold batch/streaming, com DQ | Teste de carga e sizing produtivo comprovado |
-| Unity Catalog, dashboard e CI/CD Databricks | Certificação formal de conformidade com a LGPD |
-| Ambientes lógicos `dev` e `prod` no Bundle | Certificação operacional ou regulatória formal |
-
-### 1.5 Estado resumido
-
-| Capacidade | Estado no repositório | Observação |
-| --- | --- | --- |
-| Fluxo batch local -> S3 -> ADLS | Componentes versionados | Upload e ADF são disparados separadamente; recursos cloud precisam existir |
-| Raw -> Bronze -> Silver -> Gold | Componentes versionados | Regex de `odate`, gate por partição e promoção fail-closed implementados; o bootstrap e a infraestrutura cloud ainda exigem preparação |
-| Streaming | Implementado em prod | Um Event Hubs Standard OAuth-only alimenta Lakeflow triggered até Bronze, Silver, quarentena e duas Gold; agenda começa pausada |
-| Qualidade e quarentena | Versionado | `clean` permite a trilha de aprovação; `chaos` continua como default para demonstrar quarentena; os gates operam em modo fail-closed |
-| Governança | Política versionada | O SQL de grants precisa ser aplicado manualmente |
-| CI/CD | Parcial | Testa gerador/Databricks/ADF/IaC, compila Bicep e separa deploy das execuções pagas; o smoke test cloud ainda é manual |
-| Infraestrutura como código | Parcial | Bundle cobre Databricks, Bicep cobre o Event Hubs/Access Connector/RBAC e JSON/PowerShell cobrem ADF; S3, ADLS e Key Vault ainda não têm IaC completo |
-
 ---
 
 ## 2. **Arquitetura de Solução e Arquitetura Técnica**
 
-### 2.1 Visão da solução
+### 2.1 Arquitetura de solução
 
-```mermaid
-flowchart LR
-    subgraph origem[Origem sintética]
-        G[Python + Faker + pandas]
-        CSV[Snapshots CSV por odate]
-        JSONL[Eventos JSONL de sinais vitais]
-        G --> CSV
-        G --> JSONL
-    end
+<img width="1448" height="1086" alt="ARQUITETURA FINAL" src="https://github.com/user-attachments/assets/2051b809-792c-43e7-8256-e5c96b3ac615" />
 
-    subgraph landing[Landing e Raw]
-        U[Uploader boto3]
-        S3[(Amazon S3 raw)]
-        ADF[Azure Data Factory<br/>GetMetadata + Copy]
-        KV[Azure Key Vault]
-        ADLS[(ADLS Gen2 raw)]
-        CSV --> U --> S3 --> ADF --> ADLS
-        KV -. chaves S3 .-> ADF
-    end
+### 2.2 Arquitetura Técnica
 
-    subgraph lakehouse[Azure Databricks Lakehouse]
-        B[(Bronze Delta)]
-        DQ1{DQX<br/>Bronze para Silver}
-        S[(Silver Delta)]
-        DQ2{DQX<br/>Silver para Gold}
-        Q[(Quarentena + métricas)]
-        GOLD[(Gold<br/>dimensões + fato + KPI)]
-        ADLS -->|Auto Loader| B --> DQ1
-        DQ1 -->|aprovado| S --> DQ2
-        DQ2 -->|aprovado| GOLD
-        DQ1 -->|reprovado| Q
-        DQ2 -->|reprovado| Q
-    end
+<img width="1536" height="1024" alt="arquitetura tecnica" src="https://github.com/user-attachments/assets/fa050e62-c80a-4f6d-9a29-c7b67a1a5ecd" />
 
-    subgraph consumo[Consumo e operação]
-        BI[Databricks SQL / BI]
-        SYS[(System tables<br/>Lakeflow Jobs)]
-        OBS[Dashboard de operação]
-        GOLD --> BI
-        Q --> OBS
-        SYS --> OBS
-    end
+A arquitetura técnica apresenta uma plataforma Lakehouse híbrida, com processamento batch e streaming, centralizada no Azure Databricks e estruturada segundo a arquitetura Medallion. No fluxo batch, snapshots sintéticos armazenados no Amazon S3 são transportados pelo Azure Data Factory para o ADLS Gen2 e processados pelas camadas Raw, Bronze, Silver e Gold. Já no fluxo streaming, eventos gerados por um Producer em Python são publicados no Azure Event Hubs e consumidos continuamente pelo Databricks. Em ambos os casos, o processamento utiliza Lakeflow Pipelines, Spark Declarative Pipelines e Delta Lake, permitindo processamento distribuído, transações ACID, evolução de schema e reprocessamento controlado.
 
-    JSONL --> EH[(Event Hubs Standard<br/>OAuth-only)]
-    EH -->|Kafka + service credential| VB[(Bronze<br/>vital_events_raw)]
-    VB --> VDQ{DQ após<br/>limpeza e tipagem}
-    VDQ -->|inválido + bloqueio| VQ[(Quarentena)]
-    VDQ -->|lote aprovado| VS[(Silver<br/>vital_events)]
-    VS --> VG[(Gold<br/>janelas 5 min / 1 h)]
-```
+Entre as camadas são aplicadas regras de Data Quality, como completude, unicidade, consistência, tipos e regras de negócio, com possibilidade de direcionamento de registros inválidos para quarentena. A camada Silver concentra limpeza, deduplicação, normalização e minimização de PII, enquanto a Gold organiza os dados em Star Schema, com fatos, dimensões, agregações e KPIs destinados ao consumo analítico. A solução ainda incorpora mecanismos transversais de governança e segurança com Unity Catalog e Azure Key Vault, observabilidade com Databricks Dashboards e Logic Apps, checkpoints e mecanismos de recuperação no streaming, além de automação e versionamento dos recursos Databricks por meio de Declarative Automation Bundles e CI/CD.
 
-O batch mensal por `odate` e o streaming de sinais vitais são trilhas separadas.
-O streaming usa uma Pipeline Lakeflow acionada: cada execução consome somente
-offsets novos, atualiza todas as camadas e desliga o compute ao terminar. A
-agenda é implantada pausada para que ativação, latência e custo sejam aprovados
-explicitamente.
-
-### 2.2 Arquitetura técnica, identidades e limites
-
-```mermaid
-flowchart LR
-    DEV[Máquina local<br/>Python + Boto3]
-
-    subgraph aws[AWS]
-        S3[(Bucket S3 privado)]
-        IAM[Perfil/role AWS<br/>upload no prefixo raw]
-        IAM -. autoriza .-> S3
-    end
-
-    subgraph azure[Azure]
-        subgraph integ[Integração]
-            ADF[Azure Data Factory<br/>managed identity]
-            KV[Key Vault<br/>secrets S3]
-            ADLS[(ADLS Gen2<br/>filesystem raw)]
-            ADF -->|Get secret| KV
-            ADF -->|RBAC + ACL| ADLS
-        end
-
-        subgraph dbx[Azure Databricks]
-            WS[Workspace<br/>Jobs + Pipelines + SQL]
-            UC[Unity Catalog<br/>catálogos e schemas]
-            SP[Identidade de execução/deploy]
-            GROUPS[Grupos de leitores<br/>e contribuidores]
-            SP -->|OAuth M2M + grants| WS
-            WS --> UC
-            GROUPS -->|privilégios mínimos| UC
-        end
-    end
-
-    GH[GitHub Actions<br/>Environments + secrets]
-    DEV -->|credencial AWS local| S3
-    S3 -->|Copy via secrets do KV| ADF
-    ADLS -->|external location/credencial| WS
-    GH -->|OAuth M2M| WS
-```
-
-O repositório declara a factory e sua managed identity, os artefatos ADF, o Bundle Databricks e as políticas SQL para grupos humanos. Bucket, storage, cofre, rede, credenciais/external locations, grupos e privilégios da identidade de execução são fundação externa; não devem ser inferidos como provisionados pelo código atual.
 
 ### 2.3 Fluxo técnico end-to-end
 
@@ -198,34 +79,7 @@ O repositório declara a factory e sua managed identity, os artefatos ADF, o Bun
 | S3. DQ/Silver | Bronze de eventos | Parse, limpeza e casts precedem 23 regras; erro vai à quarentena e falha o lote inteiro | `quarantine.vital_events` ou `silver.vital_events` deduplicada |
 | S4. Gold streaming | Silver de eventos | Agregações temporais por paciente e população | `gold.vital_patient_5m` e `gold.vital_population_hourly` |
 
-### 2.4 Componentes e justificativas
-
-| Componente | Papel | Justificativa | Trade-off |
-| --- | --- | --- | --- |
-| Python, Faker, NumPy e pandas | Fonte sintética | Baixo custo para reproduzir entidades relacionais, distribuições e casos inválidos | Não substitui uma fonte real nem simula perfeitamente comportamento clínico |
-| Amazon S3 | Landing externa | Demonstra integração multicloud e desacopla a geração da plataforma Azure | Acrescenta custo, credenciais e um salto de rede |
-| Azure Data Factory | Orquestração da cópia | Conector nativo S3/ADLS, paralelismo, retries e histórico de execução | O pipeline atual é manual e não dispara o Databricks |
-| ADLS Gen2 | Zona Raw | Armazenamento de objetos escalável, hierárquico e integrado ao Azure | RBAC, ACLs, rede e lifecycle precisam ser configurados fora deste repositório |
-| Azure Databricks | Processamento distribuído | Spark, Lakeflow, Delta Lake, Jobs, SQL e governança na mesma plataforma | Custo e dependência do workspace; requer Unity Catalog preparado |
-| Delta Lake | Bronze, Silver e Gold | Transações ACID, schema enforcement e histórico transacional | Exige governança de retenção, otimização e custos de storage/compute |
-| DQX | Gates de qualidade | Regras declarativas, split entre válidos/inválidos e quarentena | Projeto Databricks Labs, sem SLA formal; a dependência está fixada em `0.15.0` para builds reprodutíveis |
-| Unity Catalog | Governança | Controle hierárquico por catálogo/schema, grupos e privilégios mínimos | Grupos, storage credentials e grants não são provisionados pelo Bundle atual |
-| Declarative Automation Bundles | Recursos Databricks como código | Versiona pipelines, jobs, warehouse e dashboard por ambiente | Não provisiona toda a fundação AWS/Azure do case |
-| Azure Event Hubs | Ingestão streaming produtiva | Um namespace Standard de 1 TU, Kafka, retenção curta e OAuth-only reduzem custo e superfície de segredo | O namespace cobra enquanto existir; três dias de retenção exigem consumo frequente ou replay da origem |
-
-### 2.5 Escolha de **Armazenamento de Dados**
-
-A solução usa três níveis de **Armazenamento de Dados**, cada um com responsabilidade distinta:
-
-| Tecnologia | Uso no case | Volume, velocidade e variedade | Por que não concentrar tudo aqui |
-| --- | --- | --- | --- |
-| S3 | Landing temporária do produtor batch | Bom para arquivos e crescimento horizontal | Não é a camada governada principal do workspace Azure |
-| ADLS Gen2 | Arquivos Raw entregues pelo ADF | Adequado para CSVs particionados e futura variedade de formatos | O repositório não aplica imutabilidade, versionamento ou retenção; arquivo puro também não oferece sozinho semântica analítica ou ACID |
-| Delta Lake no Databricks | Tabelas Bronze, Silver e Gold | Une storage de objetos com transações, schema e processamento Spark | Requer compute e governança Databricks |
-
-Um banco relacional seria apropriado para transações operacionais e consultas seletivas, mas menos flexível como landing de arquivos e histórico bruto em grande escala. Um data warehouse dedicado seria uma alternativa para servir BI com alta concorrência; neste case, a Gold no Lakehouse reduz movimentações e atende o escopo analítico. On-premises não foi escolhido porque exigiria capacidade, alta disponibilidade, atualização e expansão administradas pelo próprio time. A opção cloud facilita expansão sob demanda, desde que custos, identidade e rede sejam governados.
-
-### 2.6 Modelo lógico do domínio
+### 2.4 Modelo lógico do domínio
 
 ```mermaid
 erDiagram
@@ -271,38 +125,6 @@ erDiagram
 ```
 
 As relações representam o desenho lógico; PKs e FKs não são declaradas nem impostas no storage atual. O perfil `clean` reconcilia referências básicas dos dados gerados, mas o gate DQ ainda não executa anti-joins entre todas as tabelas para impor integridade referencial sobre qualquer fonte externa; essa lacuna permanece nas limitações.
-
-### 2.7 Organização do repositório
-
-```text
-.
-|-- .github/workflows/        # CI e deploy do Bundle para dev/prod
-|-- adf/
-|   |-- factory/              # Factory e identidade gerenciada
-|   |-- linkedService/        # S3, Key Vault e ADLS
-|   |-- dataset/              # Datasets binários parametrizados
-|   `-- pipeline/             # Cópia batch S3 -> ADLS
-|-- data-generator/
-|   |-- config/               # Volumes e perfis de qualidade
-|   |-- generators/           # Entidades batch e eventos
-|   |-- ingestion-s3/         # Uploader boto3
-|   |-- metadata/             # Controle incremental de IDs
-|   |-- producers/            # Produtor Event Hubs
-|   |-- tests/                # Contratos dos perfis clean/chaos
-|   `-- utils/                # Snapshot, churn, saneamento, arquivos e anomalias
-|-- databricks/
-|   |-- resources/            # Pipelines, Jobs, DQ, warehouse e dashboard
-|   |-- src/bronze/           # Auto Loader
-|   |-- src/silver/           # Tipagem, snapshot atual e máscaras
-|   |-- src/gold/             # Dimensões, fato e KPI
-|   |-- src/dq/               # Gates DQX, quarentena e métricas
-|   |-- src/governance/       # Grants do Unity Catalog
-|   `-- databricks.yml        # Bundle e targets
-|-- sample_data/              # Amostras versionadas; não são bootstrap automático
-`-- README.md
-```
-
----
 
 ## 3. **Explicação sobre o Case Desenvolvido**
 
@@ -590,10 +412,6 @@ concede permissões de workspace/warehouse e não é executado automaticamente
 pelo Bundle; esses itens são pré-requisitos administrativos separados.
 
 Para uso real, também são necessários: bloqueio de acesso público, TLS obrigatório, criptografia em repouso validada, private endpoints/VNet, rotação de credenciais, logs de auditoria, política de retenção/expurgo, segregação de funções, resposta a incidentes e avaliação de impacto. O uso de serviços que criptografam por padrão não substitui a verificação da configuração efetiva.
-
-#### LGPD
-
-Dados de saúde são dados pessoais sensíveis segundo a Lei nº 13.709/2018. Este case usa dados sintéticos e demonstra controles técnicos, mas não comprova conformidade integral. Para uma implantação real, o controlador deve documentar finalidade e base legal, aplicar necessidade e minimização, estabelecer retenção, atender direitos dos titulares, gerenciar operadores, testar segurança e avaliar riscos de reidentificação. **Mascaramento de Dados** não deve ser apresentado como anonimização sem uma análise contextual robusta.
 
 ### 3.13 **Observabilidade**
 
@@ -945,38 +763,7 @@ preserva os offsets. A agenda do Job continua pausada após a execução manual.
 6. Para o streaming, execute separadamente `Run production streaming backlog` com confirmação explícita. Ele não gera nem reenvia eventos.
 7. Acompanhe o `healthlake_medallion_refresh`, o update Lakeflow, as métricas por flow, o backlog do Event Hubs e execute os smoke tests funcionais.
 
-### 4.13 Roteiro de demonstração
-
-| Tempo | Demonstração |
-| ---: | --- |
-| 0-10 min | Problema, objetivo, dados sintéticos e requisitos |
-| 10-25 min | Diagrama, escolhas tecnológicas e limites do escopo |
-| 25-40 min | Geração, partição, S3 e execução ADF |
-| 40-60 min | Bronze, gates DQX, Silver e Gold |
-| 60-70 min | **Mascaramento de Dados**, **Segurança de Dados** e Unity Catalog |
-| 70-80 min | **Observabilidade**, dashboard e **Escalabilidade** |
-| 80-90 min | Limitações, roadmap e perguntas |
-
-O roteiro usa duas partições imutáveis: uma gerada com `--profile clean` para chegar à Gold e outra, com `--profile chaos`, para demonstrar quarentena e bloqueio fail-closed. Os dois perfis estão implementados; registre separadamente a evidência cloud de sucesso e de falha esperada.
-
-### 4.14 Evidências para a entrega e apresentação
-
-Diagramas e código não substituem evidência de execução. O repositório não versiona capturas ou resultados cloud; para cada ambiente e `odate`, registre pelo menos:
-
-| Etapa | Evidência mínima | Critério de aceite |
-| --- | --- | --- |
-| Geração | Log do comando, `odate`, seed, contagens e checksums | Cinco CSVs completos no path esperado |
-| S3 | Listagem dos cinco objetos, tamanho e versão/checksum | Partição íntegra antes do ADF |
-| ADF | Run ID e status das cinco cópias | Pipeline `Succeeded`, sem dataset ausente |
-| Bronze | Contagens por `odate`, `_source_file` e violações de expectations | Linhagem e volume reconciliados com a Raw; `odate_present` sem falha |
-| DQX | `dq_run_metrics`, `dq_promotion_control` e amostra da quarentena `_v2` para perfis clean/chaos | `removed_by_cleaning = input_rows - checked_rows` reconciliado; clean aprovado; qualquer violação remanescente no chaos bloqueia a tabela inteira |
-| Silver/Gold | Run ID do Job, contagens e consulta de `kpi_hospital_daily` | Os dois gates aprovados e produtos Gold populados |
-| Streaming | Métricas Incoming/Outgoing do Event Hubs, update ID, `num_output_rows` por flow e DQ expectations | Entrada = saída; Bronze/Silver/Gold reconciliadas; quarentena zero no canário válido |
-| Dashboard | Captura com horário, workspace e filtros visíveis | Métricas coerentes com a run demonstrada |
-
-Não publique chaves, connection strings, nomes de pessoas reais ou identificadores de conta nas capturas. Vincule as evidências ao commit e ao `odate` executados para que a demonstração seja auditável.
-
-### 4.15 Troubleshooting
+### 4.13 Troubleshooting
 
 | Sintoma | Verificação |
 | --- | --- |
@@ -993,104 +780,33 @@ Não publique chaves, connection strings, nomes de pessoas reais ou identificado
 
 ---
 
-## 5. Cobertura dos requisitos
+## 5. **Próximos Passos e Considerações Finais**
 
-| Requisito do PDF | Evidência no case | Cobertura atual |
-| --- | --- | --- |
-| **Extração de Dados** | Faker/pandas, cinco snapshots CSV e eventos JSONL; diferentes distribuições e anomalias | Implementada com dados simulados |
-| **Ingestão de Dados** | Boto3 -> S3; ADF batch S3 -> ADLS; Event Hubs -> Lakeflow | Batch versionado; streaming produtivo até Gold validado por canário |
-| **Armazenamento de Dados** | S3 landing, ADLS Raw, Delta Bronze/Silver/Gold | Implementado nos artefatos; infraestrutura é externa |
-| **Observabilidade** | Runs/retries do ADF, linhagem, DQX, event log, system tables, dashboard produtivo e alertas event-driven via Logic App | Parcial; cobre frescor/latência Databricks, mas faltam custo, backlog live, SLO e visão S3/ADF ponta a ponta |
-| **Segurança de Dados** | Key Vault, OAuth-only no Event Hubs, managed identity/service credential, OAuth M2M, GitHub Environments e Unity Catalog | Parcial; endpoint streaming ainda é público para o case sintético e o deployer usa client secret no CI |
-| **Mascaramento de Dados** | Máscaras na Silver/quarentena e remoção de nome, CPF, e-mail e telefone de pacientes da Gold | Versionado como minimização; regex de dígitos corrigido; Gold ainda contém dados pessoais/quasi-identificadores e não equivale a anonimização |
-| **Arquitetura de Dados** | Lakehouse Medallion, Spark distribuído, Delta e modelo estrela | Implementada no Bundle |
-| **Escalabilidade** | ADF paralelo, Auto Loader, serverless, filas e Event Hubs em lotes | Mecanismos presentes; sem teste de carga ou dimensionamento comprovado |
-| **Reprodutibilidade da Arquitetura** | Dependências pinadas, testes, JSON ADF, Bicep Event Hubs/Logic App, Bundle e workflows | Parcial; faltam bootstrap transacional, IaC integral de S3/ADLS/Key Vault, deploy cloud automatizado e smoke test cloud |
+### 5.1 Próximos Passos
 
----
+- Evoluir a observabilidade dos pipelines, monitorando latência, throughput, tempo de execução, falhas, volume processado e consumo de recursos.
+- Criar mecanismos mais robustos de reprocessamento e recuperação de falhas, garantindo idempotência tanto no fluxo batch quanto no streaming.
+- Realizar testes de performance e escalabilidade com volumes maiores de dados e diferentes níveis de paralelismo.
+- Otimizar as tabelas Delta com estratégias de particionamento, OPTIMIZE, clustering e gerenciamento adequado de arquivos.
+- Evoluir a segurança de dados com políticas mais detalhadas de acesso, Row-Level Security, Column-Level Security e mascaramento de PII.
+- Separar formalmente os ambientes de desenvolvimento, homologação e produção.
+- Expandir a cobertura de testes automatizados, incluindo testes unitários, integração, qualidade dos dados e validação dos pipelines.
+- Aprimorar a estratégia de FinOps, acompanhando custos de processamento, armazenamento, Event Hubs e workloads Databricks.
+Definir SLAs/SLOs de dados, como disponibilidade, freshness e tempo máximo de processamento.
 
-## 6. **Melhorias e Considerações Finais**
-
-### 6.1 Limitações conhecidas
-
-| Prioridade | Limitação verificada | Impacto | Correção recomendada |
-| --- | --- | --- | --- |
-| P0 | Bootstrap depende de snapshots locais ignorados | O perfil `clean` preserva headers e elimina FKs órfãs, mas um clone sem registros-base produz dimensões vazias e o gate reprova a `odate` | Versionar fixture limpa ou criar comando transacional de bootstrap/reset |
-| P1 | Sobrescrita reutiliza o path já descoberto | Auto Loader não habilita `cloudFiles.allowOverwrites`; Raw muda, mas Bronze pode não reprocessar | Usar paths imutáveis por execução ou desenhar replay com overwrite, checkpoint e deduplicação |
-| P1 | O gate não impõe integridade referencial cruzada | O perfil `clean` reconcilia os dados gerados, mas uma fonte externa pode trazer FKs presentes que apontam para dimensões inexistentes | Adicionar anti-joins/regras DQ entre fatos e dimensões |
-| P1 | ADF e Databricks não estão encadeados | Operação manual, risco de partição parcial | Criar trigger/orquestrador e manifest de conclusão |
-| P1 | IaC cloud ainda é parcial | Event Hubs está em Bicep, mas S3, ADLS, Key Vault e a fundação Databricks não formam um bootstrap único | Completar Terraform/Bicep e migrations de grants |
-| P1 | Rede pública do Event Hubs | OAuth/TLS reduz o risco, mas não substitui isolamento para dados clínicos reais | Implementar Private Link/NCC e desabilitar acesso público antes do go-live real |
-| P1 | Data Sender humano usado no canário | Identidade pessoal em produção conflita com segregação de funções | Criar workload identity do producer e revogar o usuário com reconciliação explícita do RBAC |
-| P2 | Dashboard mapeia IDs físicos por catálogo | Recriar um workspace exige atualizar o JSON versionado | Automatizar a descoberta controlada de `workspace_id` por ambiente |
-| P2 | Actions fixadas por SHA exigem manutenção | O pin evita mudanças não revisadas, mas também não recebe correções automaticamente | Automatizar PRs controlados de atualização das actions |
-| P2 | PII integral permanece em Raw/Bronze | Acesso de engenharia aumenta superfície de risco | Reforçar least privilege, auditoria, retenção, tokenização e ambientes isolados |
-| P2 | Observabilidade ainda não cobre custo e atraso S3/ADF/Event Hubs live | O painel mostra frescor/latência no Databricks e backlog da última run, não o estado externo atual | Adicionar SLOs e Azure Monitor seletivo, sem criar consultas Databricks agendadas |
-| P2 | Conflito de payload para o mesmo `event_id` não é distinguido | A deduplicação conserva somente um registro dentro do watermark | Alertar quando um UUID aparecer com outro `payload_sha256` |
-
-### 6.2 Plano de implementação
-
-#### Fase 0 - Tornar a demonstração determinística
-
-Concluído no código:
-
-- regex de `odate` e de normalização de dígitos corrigidos;
-- perfis `clean` e `chaos` explícitos, com testes do gerador;
-- parâmetro obrigatório `odate` propagado aos gates;
-- DQ restrito ao snapshot, com limpeza/deduplicação/tipagem antes das regras;
-- promoção conjunta das cinco tabelas e expectations `expect_or_fail`;
-- DQX fixado em `0.15.0`.
-
-Pendências ainda verdadeiras:
-
-- implementar bootstrap/reset seguro com relógio de referência parametrizado;
-- automatizar uma validação end-to-end cloud com contagens esperadas na Gold.
-
-#### Fase 1 - Automatizar e reproduzir
-
-- Completar IaC de S3, Key Vault, ADLS, Databricks e identidades; Event Hubs já está em Bicep.
-- Publicar ADF por pipeline de deploy.
-- Aplicar schemas, storage credentials, external locations e grants como migrations.
-- Encadear geração/landing, ADF e Databricks com manifest e idempotência.
-- Remover hosts, IDs, e-mails e nomes físicos hardcoded.
-
-#### Fase 2 - Produção segura e observável
-
-- Migrar o CI/CD de client secret para federação OIDC e usar workload identity dedicada no producer.
-- Isolar rede com private endpoints e bloquear acesso público.
-- Integrar custo, auditoria ADF/S3 e métricas Azure Monitor à camada produtiva já centralizada, com limites de gasto.
-- Definir objetivo de ponto de recuperação (RPO), objetivo de tempo de recuperação (RTO), SLA/SLO, retenção, backup e resposta a incidentes.
-- Executar avaliação de impacto e controles organizacionais aplicáveis à LGPD.
-
-#### Fase 3 - Streaming e escala
-
-Concluídos: consumo Kafka OAuth com checkpoint, chave por paciente, Bronze
-imutável, DQ fail-closed pós-limpeza, quarentena, watermark/deduplicação e Gold
-temporal, dashboard produtivo e alerta event-driven de falha/duração. Pendente:
-testar volume/latência realistas, alertar lag/quarentena com sinal externo,
-definir SLO e ajustar partições, throughput, agenda, compute e compactação.
-
-### 6.3 Considerações finais
+### 5.2 Considerações finais
 
 O projeto apresenta uma base coerente para um case de engenharia de dados: fontes sintéticas relacionais, integração multicloud, landing Raw, arquitetura Medallion, Spark/Delta, gates de qualidade, modelagem dimensional, governança por grupos, dashboard e deploy declarativo do Databricks.
 
-O principal mérito arquitetural é separar fidelidade, qualidade e consumo: no
-batch, a Raw preserva os bytes, a Bronze mantém linhagem, os gates validam uma
-única `odate` pós-limpeza e Silver/Gold só avançam em conjunto; no streaming, a
-Bronze preserva payload e offsets, o contrato v1 falha fechado antes da Silver
-e as Gold publicam produtos temporais. O caminho feliz streaming foi validado
-em produção com um canário pequeno. O principal ponto de evolução continua
-operacional: bootstrap integral por IaC, workload identity no producer, rede
-privada, alertas/SLO e smoke tests automatizados. Implementação não equivale a
-certificação de conformidade ou dimensionamento de produção real.
+Além de demonstrar os principais componentes tecnológicos, o case evidencia preocupações importantes de uma plataforma moderna de engenharia de dados, como qualidade, confiabilidade, rastreabilidade, segurança, escalabilidade e automação. Dessa forma, a solução não se limita à movimentação e transformação de dados, mas estabelece uma base arquitetural que pode ser progressivamente evoluída para atender requisitos de produção, novos domínios de dados e consumidores analíticos com maior escala e governança.
 
 ---
 
-## 7. Referências
+## 6. Referências
 
 Fontes primárias e oficiais consultadas para fundamentar as escolhas. Acesso em 6 de agosto de 2026, salvo data indicada na própria página.
 
-### 7.1 Geração e integração AWS
+### 6.1 Geração e integração AWS
 
 - [Faker - Seeding the Generator](https://faker.readthedocs.io/en/stable/#seeding-the-generator) - uso de seed e limitação de estabilidade entre versões.
 - [pandas 2.2 - `DataFrame.to_csv`](https://pandas.pydata.org/pandas-docs/version/2.2/reference/api/pandas.DataFrame.to_csv.html) - persistência dos snapshots CSV.
@@ -1098,7 +814,7 @@ Fontes primárias e oficiais consultadas para fundamentar as escolhas. Acesso em
 - [Boto3 - Credentials](https://docs.aws.amazon.com/boto3/latest/guide/credentials.html) - cadeia padrão de credenciais.
 - [AWS - Security best practices for Amazon S3](https://docs.aws.amazon.com/AmazonS3/latest/userguide/security-best-practices.html) - least privilege, bloqueio público, TLS e criptografia.
 
-### 7.2 Azure Data Factory e storage
+### 6.2 Azure Data Factory e storage
 
 - [Microsoft - Conector Amazon S3 no Azure Data Factory](https://learn.microsoft.com/en-us/azure/data-factory/connector-amazon-simple-storage-service) - Copy Activity, GetMetadata e permissões S3.
 - [Microsoft - Conector ADLS Gen2 no Azure Data Factory](https://learn.microsoft.com/en-us/azure/data-factory/connector-azure-data-lake-storage) - sink ADLS, hierarquia e autenticação.
@@ -1109,7 +825,7 @@ Fontes primárias e oficiais consultadas para fundamentar as escolhas. Acesso em
 - [Microsoft - Access control model in ADLS](https://learn.microsoft.com/en-us/azure/storage/blobs/data-lake-storage-access-control-model) - RBAC, ABAC e ACL.
 - [Microsoft - Azure data encryption at rest](https://learn.microsoft.com/en-us/azure/security/fundamentals/encryption-atrest) - criptografia e gestão de chaves.
 
-### 7.3 Lakehouse, qualidade e consumo
+### 6.3 Lakehouse, qualidade e consumo
 
 - [Microsoft - Medallion Lakehouse Architecture no Azure Databricks](https://learn.microsoft.com/en-us/azure/databricks/lakehouse/medallion) - papéis de Bronze, Silver e Gold.
 - [Microsoft - Auto Loader](https://learn.microsoft.com/en-us/azure/databricks/ingestion/cloud-object-storage/auto-loader/) - ingestão incremental, checkpoint e formatos.
@@ -1121,7 +837,7 @@ Fontes primárias e oficiais consultadas para fundamentar as escolhas. Acesso em
 - [Databricks Labs - DQX README](https://github.com/databrickslabs/dqx/blob/main/README.md) - status Labs e ausência de SLA formal.
 - [Microsoft - Star schema](https://learn.microsoft.com/en-us/power-bi/guidance/star-schema) - dimensões, fatos e granularidade.
 
-### 7.4 Governança, operação e CI/CD
+### 6.4 Governança, operação e CI/CD
 
 - [Microsoft - Unity Catalog access control](https://learn.microsoft.com/en-us/azure/databricks/data-governance/unity-catalog/access-control/) - privilégios, ownership e masking.
 - [Microsoft - Unity Catalog setup guide](https://learn.microsoft.com/en-us/azure/databricks/data-governance/unity-catalog/setup-uc) - catálogos, schemas e acesso por grupos.
@@ -1134,7 +850,7 @@ Fontes primárias e oficiais consultadas para fundamentar as escolhas. Acesso em
 - [Microsoft - Logic Apps e alertas](https://learn.microsoft.com/en-us/azure/azure-monitor/alerts/alerts-logic-apps) - integração event-driven de alertas.
 - [GitHub - Deployments and environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments) - secrets, variables e proteção de deploy.
 
-### 7.5 Streaming e privacidade
+### 6.5 Streaming e privacidade
 
 - [Microsoft - Enviar eventos ao Event Hubs com Python](https://learn.microsoft.com/en-us/azure/event-hubs/event-hubs-python-get-started-send) - produtor, autenticação e batches.
 - [Microsoft - Autenticação Kafka no Azure Databricks](https://learn.microsoft.com/en-us/azure/databricks/connect/streaming/kafka/authentication) - OAuth com service credentials.
@@ -1146,8 +862,3 @@ Fontes primárias e oficiais consultadas para fundamentar as escolhas. Acesso em
 - [ANPD - Estudo técnico sobre anonimização](https://www.gov.br/anpd/pt-br/centrais-de-conteudo/documentos-tecnicos-orientativos/estudo_tecnico_sobre_anonimizacao_de_dados_na_lgpd___analise_juridica.pdf) - análise contextual de anonimização e risco de reversão.
 
 ---
-
-Projeto acadêmico que documenta decisões, controles e trade-offs de uma
-arquitetura de engenharia de dados ponta a ponta. Batch e streaming possuem
-evidência de execução nos ambientes-alvo; um clone limpo ainda depende do
-bootstrap cloud documentado e não representa uma certificação de produção.
