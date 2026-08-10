@@ -425,7 +425,7 @@ Para uso real, também são necessários: bloqueio de acesso público, TLS obrig
 | `dq_promotion_control` | DQX/Silver | Única `odate` aprovada por estágio, atualizada somente depois que as cinco tabelas passam |
 | Event log `vital_streaming_pipeline_events` | Lakeflow | Estado do update, volume/status por flow, expectations e backlog observado durante a run |
 | Tabelas de sistema `system.lakeflow.*` | Databricks | Estado e duração de Jobs e Pipeline, incluindo falha/cancelamento |
-| E-mail + Logic App Consumption | Jobs produtivos | Alerta event-driven de falha e duração excessiva, sem polling |
+| E-mail + Logic App Consumption | Jobs Databricks e ADF produtivos | Webhooks de falha/duração e verificação mensal da ingestão S3 → ADLS no dia 05 |
 | Dashboard AI/BI produtivo | SQL Warehouse | DQ batch por `odate`, DQ/flows streaming, frescor, latência, quarentena e reconciliação |
 
 Toda a camada operacional foi concentrada em produção. Dev não possui dashboard,
@@ -438,9 +438,12 @@ somente quando alguém abre/atualiza o painel. O Warehouse serverless é 2X-Smal
 máximo de um cluster, auto-stop de 10 minutos e o CI o para novamente após cada
 deploy.
 
-A Logic App `logic-healthlake-alerts-prod-brs-01` recebe somente webhooks de
-falha/duração do workspace produtivo. Ela é Consumption e tem trigger HTTP por
-evento, sem recurrence; o e-mail nativo do Job continua sendo o canal humano.
+A Logic App `logic-healthlake-alerts-prod-brs-01` recebe webhooks de
+falha/duração do workspace produtivo e, no dia 05 às 23:55, consulta diretamente
+o histórico do ADF PROD. Se não existir uma run `Succeeded` de
+`pl_copy_s3_to_adls_raw` para a `odate` do dia 05, envia e-mail sem iniciar o
+pipeline. A identidade gerenciada possui somente as permissões de consulta de
+runs; DEV não possui Logic App, diagnostic setting nem Log Analytics.
 O backlog mostrado é deliberadamente rotulado como observado no último refresh:
 com a Pipeline `IDLE`, o Databricks não conhece eventos que chegaram depois.
 Ainda não há custo financeiro/DBUs no painel, backlog realmente atual do Event

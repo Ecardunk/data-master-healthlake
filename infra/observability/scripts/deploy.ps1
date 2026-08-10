@@ -70,6 +70,9 @@ if (
     $configuration.parameters.location.value -ne "brazilsouth" -or
     $configuration.parameters.logicAppName.value -ne "logic-healthlake-alerts-prod-brs-01" -or
     $configuration.parameters.databricksWorkspaceId.value -ne "7405616424934600" -or
+    $configuration.parameters.dataFactoryName.value -ne "adf-healthlake-prod-brs-01" -or
+    $configuration.parameters.dataFactoryPipelineName.value -ne "pl_copy_s3_to_adls_raw" -or
+    $configuration.parameters.outlookConnectionResourceId.value -notlike "*/rg-healthlake-prod-brs-01/*" -or
     $configuration.parameters.tags.value.environment -ne "prod"
 ) {
     throw "The committed Logic App parameters are not production-only."
@@ -135,6 +138,8 @@ $logicApp = Invoke-AzChecked -Arguments @(
 if (
     $logicApp.location -ne "brazilsouth" -or
     $logicApp.properties.state -ne "Enabled" -or
+    [string]::IsNullOrWhiteSpace([string]$logicApp.identity.principalId) -or
+    $null -eq $logicApp.properties.definition.triggers.check_adf_ingestion_day_05 -or
     $logicApp.tags.environment -ne "prod"
 ) {
     throw "The deployed Logic App does not match the production contract."
@@ -229,4 +234,4 @@ if ($ConfigureDatabricks) {
     Write-Output "Databricks production notification destination ID: $($destination.id)"
 }
 
-Write-Output "Production Logic App is deployed and idle; no webhook test was sent."
+Write-Output "Production Logic App is deployed; no webhook test, ADF run, or Databricks run was started."

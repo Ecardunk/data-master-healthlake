@@ -253,9 +253,12 @@ Os Jobs produtivos `healthlake_medallion_refresh` e
 e-mail e por uma notification destination do Databricks. Essa destination
 aponta para a Logic App Consumption
 `logic-healthlake-alerts-prod-brs-01`, versionada em
-[`../infra/observability`](../infra/observability). A Logic App tem somente um
-trigger HTTP por evento, valida o `workspace_id` produtivo e não faz polling ou
-recurrence. Nenhum webhook de teste é disparado no deploy.
+[`../infra/observability`](../infra/observability). A Logic App valida o
+`workspace_id` no trigger HTTP e também possui uma recorrência mensal para
+consultar, por identidade gerenciada read-only, a conclusão do ADF PROD no dia
+05. A consulta não inicia pipelines; quando não encontra a run esperada, envia
+e-mail. Nenhum webhook de teste é disparado no deploy e DEV não possui recursos
+de observabilidade ou alerta.
 
 Como a Pipeline é triggered e fica `IDLE`, o backlog exibido é o observado no
 último refresh e inclui o horário/idade da observação. Não representa eventos
