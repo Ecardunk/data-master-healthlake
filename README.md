@@ -531,17 +531,24 @@ Controles presentes no código e na configuração:
 
 Matriz humana declarada em [`unity_catalog_access.sql`](databricks/src/governance/unity_catalog_access.sql):
 
-| Grupo | Ambiente | Acesso pretendido |
-| --- | --- | --- |
-| `healthlake-dev-bi-readers` | Dev | `SELECT` somente na Gold |
-| `healthlake-dev-data-analysts` | Dev | `SELECT` somente na Gold |
-| `healthlake-dev-data-engineers-readers` | Dev | Leitura em Bronze e Silver |
-| `healthlake-dev-data-engineers-contributors` | Dev | Leitura/escrita/criação em Bronze e Silver; sem Gold/quarentena/external locations |
-| `healthlake-prod-bi-readers` | Prod | `SELECT` somente na Gold |
-| `healthlake-prod-data-analysts` | Prod | `SELECT` somente na Gold |
-| `healthlake-prod-data-engineers-readers` | Prod | Leitura em Bronze e Silver |
+| Grupo | Dev Bronze | Dev Silver | Dev Gold | Prod Bronze | Prod Silver | Prod Gold |
+| --- | --- | --- | --- | --- | --- | --- |
+| `data-engineering-admin` | Leitura | Leitura | Leitura | Leitura | Leitura | Leitura |
+| `data-engineering` | — | Leitura | Leitura | — | Leitura | Leitura |
+| `data-analysts` | — | — | — | — | Leitura | Leitura |
+| `data-scientists` | — | — | — | — | Leitura | Leitura |
+| `power-bi` | — | — | — | — | Leitura | Leitura |
 
-Em produção, escrita e deploy devem pertencer a uma identidade de serviço dedicada. O SQL acima não concede automaticamente privilégios a essa identidade e não é executado pelo Bundle; ambos são pré-requisitos administrativos.
+Todos os cinco são grupos humanos estritamente de leitura. O nome
+`data-engineering-admin` representa o administrador funcional que pode
+inspecionar todas as camadas; ele não recebe escrita, ownership, `MANAGE` nem
+administração do workspace. Em dev, apenas os dois grupos de engenharia devem
+ser atribuídos ao workspace. Em prod, os cinco devem ser atribuídos.
+
+Escrita, execução de pipelines e deploy devem pertencer a identidades de
+serviço dedicadas. O SQL acima não cria grupos, não gerencia seus membros, não
+concede permissões de workspace/warehouse e não é executado automaticamente
+pelo Bundle; esses itens são pré-requisitos administrativos separados.
 
 Para uso real, também são necessários: bloqueio de acesso público, TLS obrigatório, criptografia em repouso validada, private endpoints/VNet, rotação de credenciais, logs de auditoria, política de retenção/expurgo, segregação de funções, resposta a incidentes e avaliação de impacto. O uso de serviços que criptografam por padrão não substitui a verificação da configuração efetiva.
 
@@ -692,6 +699,12 @@ Antes do Bundle:
 6. Troque o e-mail default de alerta `dq_alert_email`.
 7. Confirme os `workspace_id` de dev/prod usados pelo dashboard.
 8. Revise `raw_root`, host e nomes de storage em [`databricks.yml`](databricks/databricks.yml).
+
+Os Jobs e Pipelines têm `run_as` explícito por ambiente: o service principal
+`sp-healthlake-dev-pipeline` em dev e `sp-healthlake-prod-pipeline` em prod. Os
+workflows autenticam via OAuth M2M; contas pessoais não são identidades de
+execução. Prefira promover/deployar pelos workflows para manter uma única
+instância do Bundle por ambiente.
 
 Autenticação local de desenvolvimento:
 

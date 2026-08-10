@@ -2,6 +2,8 @@ resources:
   pipelines:
     healthlake_bronze:
       name: healthlake-bronze-${bundle.target}
+      run_as:
+        service_principal_name: ${var.run_as_service_principal_name}
       catalog: ${var.catalog}
       schema: bronze
       serverless: true

@@ -2,6 +2,8 @@ resources:
   jobs:
     healthlake_medallion_refresh:
       name: healthlake-medallion-refresh-${bundle.target}
+      run_as:
+        service_principal_name: ${var.run_as_service_principal_name}
       description: Refreshes the HealthLake Bronze, Silver, and Gold pipelines in dependency order.
       max_concurrent_runs: 1
       timeout_seconds: 10800

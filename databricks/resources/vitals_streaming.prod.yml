@@ -1,0 +1,50 @@
+targets:
+  prod:
+    resources:
+      pipelines:
+        healthlake_vitals_streaming:
+          name: healthlake-vitals-streaming-prod
+          run_as:
+            service_principal_name: ${var.run_as_service_principal_name}
+          catalog: ${var.catalog}
+          schema: bronze
+          serverless: true
+          continuous: false
+          channel: CURRENT
+          edition: ADVANCED
+          configuration:
+            healthlake.catalog: ${var.catalog}
+            healthlake.eventhub.bootstrap_servers: ${var.eventhub_bootstrap_servers}
+            healthlake.eventhub.name: ${var.eventhub_name}
+            healthlake.eventhub.consumer_group: ${var.eventhub_consumer_group}
+            healthlake.eventhub.service_credential: ${var.eventhub_service_credential}
+            healthlake.eventhub.max_offsets_per_trigger: ${var.streaming_max_offsets_per_trigger}
+            spark.sql.session.timeZone: UTC
+          event_log:
+            catalog: ${var.catalog}
+            schema: observability
+            name: vital_streaming_pipeline_events
+          libraries:
+            - glob:
+                include: ../src/streaming/**
+
+      jobs:
+        healthlake_vitals_streaming_refresh:
+          name: healthlake-vitals-streaming-refresh-prod
+          description: Processes the Event Hubs backlog through Bronze, Silver, and Gold, then stops compute.
+          run_as:
+            service_principal_name: ${var.run_as_service_principal_name}
+          max_concurrent_runs: 1
+          timeout_seconds: 3600
+          queue:
+            enabled: false
+          schedule:
+            quartz_cron_expression: ${var.streaming_schedule_cron}
+            timezone_id: America/Sao_Paulo
+            pause_status: ${var.streaming_schedule_pause_status}
+          tasks:
+            - task_key: refresh_vital_signs
+              description: Consume only new Event Hubs offsets and refresh every medallion layer.
+              max_retries: 0
+              pipeline_task:
+                pipeline_id: ${resources.pipelines.healthlake_vitals_streaming.id}
