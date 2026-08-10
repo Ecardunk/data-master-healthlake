@@ -163,6 +163,8 @@ def test_production_deploy_leaves_observability_compute_stopped():
 
     assert "Leave observability warehouse stopped" in workflow
     assert "continue-on-error: ${{ job.status != 'success' }}" in workflow
+    assert "databricks warehouses list --output json" in workflow
+    assert "databricks bundle summary" not in workflow
     assert 'databricks warehouses stop "$warehouse_id"' in workflow
     assert 'databricks warehouses get "$warehouse_id"' in workflow
     assert 'if [[ "$state" == "STOPPED" ]]' in workflow

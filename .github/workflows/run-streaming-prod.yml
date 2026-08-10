@@ -28,6 +28,7 @@ jobs:
       DATABRICKS_CLIENT_ID: ${{ vars.DATABRICKS_CLIENT_ID }}
       DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
       CONFIRM_RUN: ${{ inputs.confirm_run }}
+      STREAMING_JOB_NAME: healthlake-vitals-streaming-refresh-prod
     steps:
       - name: Require explicit paid-run confirmation
         shell: bash
@@ -47,13 +48,21 @@ jobs:
         working-directory: databricks
         run: databricks bundle validate --target prod
       - name: Consume the backlog once through Bronze, Silver, and Gold
-        working-directory: databricks
         shell: bash
         run: |
-          job_id="$(
-            databricks bundle summary --target prod --output json --force-pull |
-              jq -r '.resources.jobs.healthlake_vitals_streaming_refresh.id'
+          set -euo pipefail
+          job_list="$(databricks jobs list --name "$STREAMING_JOB_NAME" --output json)"
+          job_ids="$(
+            jq -ce --arg name "$STREAMING_JOB_NAME" '
+              [.[] | select(.settings.name == $name) | .job_id]
+            ' <<< "$job_list"
           )"
+          job_count="$(jq -er 'length' <<< "$job_ids")"
+          if [[ "$job_count" != "1" ]]; then
+            echo "Expected exactly one deployed streaming job, found $job_count." >&2
+            exit 1
+          fi
+          job_id="$(jq -er '.[0]' <<< "$job_ids")"
           if [[ ! "$job_id" =~ ^[0-9]+$ ]]; then
             echo "Could not resolve the deployed streaming Job ID" >&2
             exit 1
