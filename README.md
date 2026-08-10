@@ -50,7 +50,8 @@ A tabela `kpi_hospital_daily` permite responder, por hospital e dia:
 
 ### 2.1 Arquitetura de solução
 
-<img width="1448" height="1086" alt="ARQUITETURA FINAL" src="https://github.com/user-attachments/assets/2051b809-792c-43e7-8256-e5c96b3ac615" />
+<img width="1448" height="1086" alt="ARQUITETURA FUNCIONAL IMAGE FINAL" src="https://github.com/user-attachments/assets/9c0cc77a-5f39-4a3d-ad00-34d2c99215ea" />
+
 
 ### 2.2 Arquitetura Técnica
 
