@@ -81,19 +81,28 @@ python .\data-generator\main.py --streaming --stream-count 10 --seed 42 --send-e
 |---|---|
 | `--streaming` | Ativa o modo de geração de dados streaming. |
 | `--stream-count` | Quantidade de eventos que serão gerados. |
-| `--seed` | Seed utilizada para reprodução dos dados gerados. |
+| `--seed` | Seed para os campos pseudoaleatórios; UUIDs e timestamps permanecem próprios de cada execução streaming. |
 | `--send-eventhub` | Envia os eventos gerados para o Azure Event Hubs. |
+| `--eventhub-fully-qualified-namespace` | Namespace completo do Event Hubs. Se omitido, usa `EVENTHUB_FULLY_QUALIFIED_NAMESPACE`. |
+| `--eventhub-name` | Nome do Event Hub. Se omitido, usa `EVENTHUB_NAME`. |
 
 Neste exemplo, serão gerados e enviados **10 eventos**.
 
 ### Configuração necessária
 
-Antes da execução, confirme se as credenciais e configurações do Event Hubs estão disponíveis para a aplicação, como:
+O envio usa OAuth com `DefaultAzureCredential`; connection strings não são
+aceitas. Configure:
 
-- Connection string;
-- Namespace;
-- Nome do Event Hub;
-- Variáveis de ambiente exigidas pelo projeto.
+- `EVENTHUB_FULLY_QUALIFIED_NAMESPACE`, por exemplo
+  `evhns-healthlake-prod-brs-01.servicebus.windows.net`;
+- `EVENTHUB_NAME`;
+- uma identidade reconhecida pelo `DefaultAzureCredential` com a função
+  `Azure Event Hubs Data Sender` no Event Hub.
+
+Cada execução recebe um `producer_run_id` UUID e é salva em um arquivo JSONL
+com esse identificador antes do envio. Cada evento usa `patient_id` como chave
+de partição. O contrato versionado está em
+`contracts/vital_event.v1.schema.json`.
 
 ---
 
@@ -209,10 +218,10 @@ python -m pip install -r .\data-generator\requirements.txt
 
 Verifique:
 
-- A connection string;
+- Se `EVENTHUB_FULLY_QUALIFIED_NAMESPACE` contém o namespace completo;
 - O nome do Event Hub;
-- As variáveis de ambiente;
-- As permissões de envio.
+- Se o `DefaultAzureCredential` encontrou a identidade esperada;
+- Se a identidade possui `Azure Event Hubs Data Sender` no Event Hub.
 
 ### Erro de acesso ao S3
 
