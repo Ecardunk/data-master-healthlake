@@ -11,6 +11,21 @@
     "databricksWorkspaceId": {
       "value": "7405616424934600"
     },
+    "dataFactoryName": {
+      "value": "adf-healthlake-prod-brs-01"
+    },
+    "dataFactoryPipelineName": {
+      "value": "pl_copy_s3_to_adls_raw"
+    },
+    "outlookConnectionResourceId": {
+      "value": "/subscriptions/6b409a82-932c-4136-b8d5-1cb02345e23e/resourceGroups/rg-healthlake-prod-brs-01/providers/Microsoft.Web/connections/outlook"
+    },
+    "adfAlertRecipient": {
+      "value": "estevao.alertas@outlook.com"
+    },
+    "adfAlertSender": {
+      "value": "cardosoestevo@yahoo.com.br"
+    },
     "tags": {
       "value": {
         "environment": "prod",
