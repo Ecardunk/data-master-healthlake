@@ -1,0 +1,44 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": {
+      "value": "brazilsouth"
+    },
+    "namespaceName": {
+      "value": "evhns-healthlake-prod-brs-01"
+    },
+    "eventHubName": {
+      "value": "evh-vitals-prod"
+    },
+    "consumerGroupName": {
+      "value": "cg-healthlake-databricks-prod"
+    },
+    "accessConnectorName": {
+      "value": "databricks-connector-healthlake-prod-eventhubs"
+    },
+    "throughputUnits": {
+      "value": 1
+    },
+    "partitionCount": {
+      "value": 2
+    },
+    "messageRetentionInDays": {
+      "value": 3
+    },
+    "producerPrincipalObjectId": {
+      "value": ""
+    },
+    "producerPrincipalType": {
+      "value": "ServicePrincipal"
+    },
+    "tags": {
+      "value": {
+        "environment": "prod",
+        "project": "data-master-healthlake",
+        "managed-by": "bicep",
+        "workload": "vital-signs-streaming"
+      }
+    }
+  }
+}

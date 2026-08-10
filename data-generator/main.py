@@ -2,7 +2,7 @@ import argparse
 import os
 import random
 from dataclasses import dataclass
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import numpy as np
 import pandas as pd
@@ -83,7 +83,10 @@ def parse_args():
         "--seed",
         type=int,
         default=None,
-        help="Optional seed for reproducible synthetic data generation"
+        help=(
+            "Optional seed for pseudo-random fields. UUIDs and current "
+            "timestamps remain unique per streaming run"
+        )
     )
     parser.add_argument(
         "--overwrite",
@@ -121,9 +124,13 @@ def parse_args():
         help="Event Hub name. Defaults to EVENTHUB_NAME from .env"
     )
     parser.add_argument(
-        "--eventhub-connection-str",
+        "--eventhub-fully-qualified-namespace",
         default=None,
-        help="Event Hub connection string. Defaults to EVENTHUB_CONNECTION_STR from .env"
+        help=(
+            "Event Hubs namespace, for example "
+            "my-namespace.servicebus.windows.net. Defaults to "
+            "EVENTHUB_FULLY_QUALIFIED_NAMESPACE from .env"
+        )
     )
 
     return parser.parse_args()
@@ -252,14 +259,29 @@ def save_snapshots(snapshots, output_dir):
             temp_path.unlink(missing_ok=True)
 
 
-def save_streaming_events(df, output_dir):
+def save_streaming_events(df, output_dir, producer_run_id):
     if df.empty:
         raise ValueError("Cannot save an empty streaming events dataset")
 
-    start_event_id = int(df["event_id"].min())
-    end_event_id = int(df["event_id"].max())
-    file_name = f"streaming_events_{start_event_id}_{end_event_id}.jsonl"
+    try:
+        normalized_run_id = str(UUID(str(producer_run_id)))
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise ValueError("producer_run_id must be a valid UUID") from exc
+
+    if "producer_run_id" not in df.columns:
+        raise ValueError("producer_run_id is required in streaming events")
+    if set(df["producer_run_id"].astype(str)) != {normalized_run_id}:
+        raise ValueError(
+            "All streaming events must match the file producer_run_id"
+        )
+
+    file_name = f"streaming_events_{normalized_run_id}.jsonl"
     output_path = output_dir / file_name
+    if output_path.exists():
+        raise FileExistsError(
+            f"Streaming run file already exists: {output_path}"
+        )
+
     temp_path = temporary_path_for(output_path)
 
     try:
@@ -282,9 +304,9 @@ def load_env():
 def resolve_eventhub_config(args):
     load_env()
 
-    connection_str = (
-        args.eventhub_connection_str
-        or os.getenv("EVENTHUB_CONNECTION_STR")
+    fully_qualified_namespace = (
+        args.eventhub_fully_qualified_namespace
+        or os.getenv("EVENTHUB_FULLY_QUALIFIED_NAMESPACE")
         or ""
     ).strip()
     eventhub_name = (
@@ -293,26 +315,24 @@ def resolve_eventhub_config(args):
         or ""
     ).strip()
 
-    if not connection_str:
+    if not fully_qualified_namespace:
         raise ValueError(
-            "Event Hub connection string is required. "
-            "Set EVENTHUB_CONNECTION_STR in .env or pass --eventhub-connection-str."
+            "Event Hubs fully qualified namespace is required. Set "
+            "EVENTHUB_FULLY_QUALIFIED_NAMESPACE in .env or pass "
+            "--eventhub-fully-qualified-namespace."
         )
 
-    if not eventhub_name and "EntityPath=" not in connection_str:
+    if not eventhub_name:
         raise ValueError(
             "Event Hub name is required. "
-            "Set EVENTHUB_NAME in .env, pass --eventhub-name, "
-            "or use an event hub-level connection string with EntityPath."
+            "Set EVENTHUB_NAME in .env or pass --eventhub-name."
         )
 
-    return connection_str, eventhub_name or None
+    return fully_qualified_namespace, eventhub_name
 
 
 def run_streaming(args):
     metadata = load_metadata()
-    metadata.setdefault("event_id", 0)
-
     current_patient_id = metadata.get("patient_id", 0)
 
     if current_patient_id <= 0:
@@ -325,40 +345,35 @@ def run_streaming(args):
     print(metadata)
     print("\nGenerating streaming events:")
 
+    producer_run_id = str(uuid4())
     events_df = StreamingEventGenerator().generate(
         n_records=args.stream_count,
-        starting_id=metadata["event_id"],
-        n_patients=current_patient_id
+        n_patients=current_patient_id,
+        producer_run_id=producer_run_id,
     )
 
     ensure_directories([OUTPUT_DIR_STREAMING])
     output_path = save_streaming_events(
         events_df,
-        OUTPUT_DIR_STREAMING
+        OUTPUT_DIR_STREAMING,
+        producer_run_id,
     )
 
     if args.send_eventhub:
-        connection_str, eventhub_name = resolve_eventhub_config(args)
+        fully_qualified_namespace, eventhub_name = resolve_eventhub_config(args)
         sent_count = send_dataframe_to_eventhub(
             events_df,
-            connection_str,
-            eventhub_name
+            fully_qualified_namespace,
+            eventhub_name,
         )
-        target_name = eventhub_name or "connection string EntityPath"
-        print(f"\nSent {sent_count} events to Event Hub '{target_name}'")
-
-    previous_event_id = metadata["event_id"]
-    metadata["event_id"] += args.stream_count
-    save_metadata(metadata)
+        print(f"\nSent {sent_count} events to Event Hub '{eventhub_name}'")
 
     print(
-        f"streaming_events: previous_event_id={previous_event_id}, "
-        f"new={args.stream_count}, "
-        f"last_event_id={metadata['event_id']}"
+        f"streaming_events: producer_run_id={producer_run_id}, "
+        f"new={args.stream_count}"
     )
     print(f"saved_file={output_path}")
 
-    print("\nMetadata updated successfully")
     print("\n===================================")
     print("Streaming events successfully generated")
     print("===================================")

@@ -4,3 +4,4 @@ numpy==2.2.5
 boto3==1.37.37
 python-dotenv==1.1.0
 azure-eventhub==5.13.0
+azure-identity==1.25.3

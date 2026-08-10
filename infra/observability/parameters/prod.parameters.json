@@ -1,0 +1,23 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": {
+      "value": "brazilsouth"
+    },
+    "logicAppName": {
+      "value": "logic-healthlake-alerts-prod-brs-01"
+    },
+    "databricksWorkspaceId": {
+      "value": "7405616424934600"
+    },
+    "tags": {
+      "value": {
+        "environment": "prod",
+        "project": "data-master-healthlake",
+        "managed-by": "bicep",
+        "workload": "observability-alerts"
+      }
+    }
+  }
+}

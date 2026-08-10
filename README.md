@@ -1,6 +1,9 @@
 # Data Master - HealthLake
 
-Plataforma de engenharia de dados para o domínio de saúde, construída com Python, Amazon S3, Azure Data Factory, Azure Data Lake Storage Gen2 e Azure Databricks. O projeto modela e versiona os componentes de um fluxo batch em arquitetura Lakehouse Medallion, da geração de dados sintéticos até produtos analíticos na camada Gold, além de um produtor experimental de eventos para Azure Event Hubs.
+Plataforma de engenharia de dados para o domínio de saúde, construída com
+Python, Amazon S3, Azure Data Factory, Azure Event Hubs, Azure Data Lake Storage
+Gen2 e Azure Databricks. O projeto implementa um fluxo batch mensal e um fluxo
+streaming triggered, ambos da geração sintética até produtos na camada Gold.
 
 > [!NOTE]
 > `HealthLake` é o nome deste projeto acadêmico. A solução não utiliza o serviço AWS HealthLake.
@@ -56,10 +59,10 @@ A tabela `kpi_hospital_daily` permite responder, por hospital e dia:
 | --- | --- |
 | Geração sintética batch e de eventos | Prontuário eletrônico ou interoperabilidade FHIR |
 | Upload batch para S3 | Uso do serviço AWS HealthLake |
-| Cópia S3 -> ADLS pelo ADF | Provisionamento completo da infraestrutura cloud |
-| Bronze, Silver, Gold e gates DQX | Consumidor de Event Hubs até Bronze/Gold |
+| Cópia S3 -> ADLS pelo ADF | Provisionamento IaC completo de toda a topologia multicloud |
+| Bronze, Silver e Gold batch/streaming, com DQ | Teste de carga e sizing produtivo comprovado |
 | Unity Catalog, dashboard e CI/CD Databricks | Certificação formal de conformidade com a LGPD |
-| Ambientes lógicos `dev` e `prod` no Bundle | Teste de carga e dimensionamento produtivo comprovado |
+| Ambientes lógicos `dev` e `prod` no Bundle | Certificação operacional ou regulatória formal |
 
 ### 1.5 Estado resumido
 
@@ -67,11 +70,11 @@ A tabela `kpi_hospital_daily` permite responder, por hospital e dia:
 | --- | --- | --- |
 | Fluxo batch local -> S3 -> ADLS | Componentes versionados | Upload e ADF são disparados separadamente; recursos cloud precisam existir |
 | Raw -> Bronze -> Silver -> Gold | Componentes versionados | Regex de `odate`, gate por partição e promoção fail-closed implementados; o bootstrap e a infraestrutura cloud ainda exigem preparação |
-| Streaming | Parcial | Gera JSONL e envia ao Event Hubs; não há consumidor downstream |
+| Streaming | Implementado em prod | Um Event Hubs Standard OAuth-only alimenta Lakeflow triggered até Bronze, Silver, quarentena e duas Gold; agenda começa pausada |
 | Qualidade e quarentena | Versionado | `clean` permite a trilha de aprovação; `chaos` continua como default para demonstrar quarentena; os gates operam em modo fail-closed |
 | Governança | Política versionada | O SQL de grants precisa ser aplicado manualmente |
-| CI/CD | Parcial | Executa testes do gerador e validate/deploy do Databricks; ainda não há smoke test cloud end-to-end |
-| Infraestrutura como código | Parcial | O Bundle cobre recursos do workspace Databricks, não S3, ADF, ADLS, Key Vault ou Event Hubs |
+| CI/CD | Parcial | Testa gerador/Databricks/ADF/IaC, compila Bicep e separa deploy das execuções pagas; o smoke test cloud ainda é manual |
+| Infraestrutura como código | Parcial | Bundle cobre Databricks, Bicep cobre o Event Hubs/Access Connector/RBAC e JSON/PowerShell cobrem ADF; S3, ADLS e Key Vault ainda não têm IaC completo |
 
 ---
 
@@ -122,11 +125,19 @@ flowchart LR
         SYS --> OBS
     end
 
-    JSONL --> EH[Azure Event Hubs]
-    EH -. consumidor não versionado .-> GAP[Fim do caminho streaming atual]
+    JSONL --> EH[(Event Hubs Standard<br/>OAuth-only)]
+    EH -->|Kafka + service credential| VB[(Bronze<br/>vital_events_raw)]
+    VB --> VDQ{DQ após<br/>limpeza e tipagem}
+    VDQ -->|inválido + bloqueio| VQ[(Quarentena)]
+    VDQ -->|lote aprovado| VS[(Silver<br/>vital_events)]
+    VS --> VG[(Gold<br/>janelas 5 min / 1 h)]
 ```
 
-O caminho contínuo está desenhado separadamente porque hoje termina no Event Hubs. Portanto, o fluxo efetivamente documentado até a Gold é o batch.
+O batch mensal por `odate` e o streaming de sinais vitais são trilhas separadas.
+O streaming usa uma Pipeline Lakeflow acionada: cada execução consome somente
+offsets novos, atualiza todas as camadas e desliga o compute ao terminar. A
+agenda é implantada pausada para que ativação, latência e custo sejam aprovados
+explicitamente.
 
 ### 2.2 Arquitetura técnica, identidades e limites
 
@@ -182,6 +193,10 @@ O repositório declara a factory e sua managed identity, os artefatos ADF, o Bun
 | 7. Gate 2 | Uma `odate` das views Silver | Revalidação tipada antes do produto analítico | Métricas, quarentena `_v2`, aprovação conjunta ou bloqueio total |
 | 8. Gold | Silver aprovada | Modelagem dimensional e agregação diária | Quatro dimensões, um fato e um KPI |
 | 9. Consumo | Gold e métricas DQ | SQL Warehouse e dashboard AI/BI | Consultas analíticas e painel operacional |
+| S1. Eventos | Contrato JSON v1 | Producer OAuth publica por `patient_id` | Um Event Hub, dois partitions, IDs UUID para deduplicação |
+| S2. Bronze streaming | Kafka Event Hubs | Lakeflow preserva payload, hash, partition e offset | `bronze.vital_events_raw` append-only |
+| S3. DQ/Silver | Bronze de eventos | Parse, limpeza e casts precedem 23 regras; erro vai à quarentena e falha o lote inteiro | `quarantine.vital_events` ou `silver.vital_events` deduplicada |
+| S4. Gold streaming | Silver de eventos | Agregações temporais por paciente e população | `gold.vital_patient_5m` e `gold.vital_population_hourly` |
 
 ### 2.4 Componentes e justificativas
 
@@ -196,7 +211,7 @@ O repositório declara a factory e sua managed identity, os artefatos ADF, o Bun
 | DQX | Gates de qualidade | Regras declarativas, split entre válidos/inválidos e quarentena | Projeto Databricks Labs, sem SLA formal; a dependência está fixada em `0.15.0` para builds reprodutíveis |
 | Unity Catalog | Governança | Controle hierárquico por catálogo/schema, grupos e privilégios mínimos | Grupos, storage credentials e grants não são provisionados pelo Bundle atual |
 | Declarative Automation Bundles | Recursos Databricks como código | Versiona pipelines, jobs, warehouse e dashboard por ambiente | Não provisiona toda a fundação AWS/Azure do case |
-| Azure Event Hubs | Demonstração streaming | Serviço particionado e compatível com produção em lotes de eventos | Falta o consumidor, checkpoint e produto analítico contínuo |
+| Azure Event Hubs | Ingestão streaming produtiva | Um namespace Standard de 1 TU, Kafka, retenção curta e OAuth-only reduzem custo e superfície de segredo | O namespace cobra enquanto existir; três dias de retenção exigem consumo frequente ou replay da origem |
 
 ### 2.5 Escolha de **Armazenamento de Dados**
 
@@ -312,7 +327,7 @@ As relações representam o desenho lógico; PKs e FKs não são declaradas nem 
 | `doctors.csv` | `doctor_id`, `doctor_name`, `crm`, `specialty`, `hospital_id`, `created_at` |
 | `diseases.csv` | `disease_id`, `disease_name`, `category`, `severity_level`, `created_at` |
 | `attendance.csv` | `attendance_id`, `patient_id`, `doctor_id`, `hospital_id`, `disease_id`, `attendance_date`, `wait_time_minutes`, `cost`, `severity_score`, `discharge_flag`, `created_at` |
-| `streaming_events_*.jsonl` | `event_id`, `patient_id`, `heart_rate`, `oxygen_level`, `temperature`, `blood_pressure_systolic`, `blood_pressure_diastolic`, `event_timestamp` |
+| `streaming_events_<producer_run_id>.jsonl` | `schema_version`, `event_id`, `event_type`, `patient_id`, sinais vitais com unidade, `event_time`, `produced_at`, `producer_run_id`, `source` |
 
 </details>
 
@@ -343,7 +358,11 @@ Configuração versionada de novos registros por execução:
 
 A CLI aceita `--profile clean|chaos`. Use `clean` para uma execução destinada à Gold e uma `odate` separada com `chaos` para demonstrar o bloqueio. A seed configura os geradores pseudoaleatórios (PRNGs) de `random`, NumPy e Faker. Isso melhora a repetibilidade, mas não garante sozinho uma reprodução byte a byte: o resultado também depende da versão das bibliotecas, do relógio usado por `end_date="now"`, do estado de IDs e dos snapshots anteriores. A própria documentação do Faker restringe a garantia à mesma versão. A opção `--overwrite` substitui arquivos da partição, mas também gera novos dados e avança novamente os IDs; ela não funciona como replay idempotente. Como o mesmo caminho é reutilizado e o Auto Loader não habilita `cloudFiles.allowOverwrites`, essa sobrescrita normalmente também não atualiza a Bronze depois que o arquivo já foi descoberto.
 
-No modo de eventos, o gerador cria um JSON por linha com sinais vitais e pode enviá-lo ao Event Hubs. O produtor respeita o tamanho máximo do lote: quando um evento não cabe, envia o lote atual e inicia outro.
+No modo de eventos, o gerador cria um contrato v1 por linha com UUID imutável,
+timestamps UTC e unidades explícitas, gravando um JSONL novo por
+`producer_run_id`. O produtor autentica com `DefaultAzureCredential`, agrupa os
+batches por `patient_id` para manter ordenação por paciente e respeita o tamanho
+máximo do Event Hubs. Não há connection string no código ou no Bundle.
 
 ### 3.3 **Ingestão de Dados** batch
 
@@ -388,9 +407,29 @@ operador.
 
 ### 3.4 **Ingestão de Dados** streaming
 
-O caminho opcional gera JSONL local e, com `--send-eventhub`, publica uma quantidade finita definida por `--stream-count` no Azure Event Hubs por connection string. Essa parte demonstra um produtor experimental para um endpoint de streaming, não uma fonte contínua nem uma arquitetura Kappa ou Lambda completa: não há loop com pacing, consumidor Spark, checkpoint, Bronze streaming, reconciliação com o batch ou marts de sinais vitais.
+Produção usa exatamente um namespace `evhns-healthlake-prod-brs-01` Standard,
+um hub `evh-vitals-prod`, 1 TU, duas partições e três dias de retenção. Capture,
+auto-inflate e autenticação SAS/local ficam desabilitados. O Bicep também cria
+um Access Connector com managed identity, que recebe somente `Azure Event Hubs
+Data Receiver` no escopo do hub. A service credential isolada do Unity Catalog
+é vinculada somente ao workspace produtivo e acessível pelo runtime
+`sp-healthlake-prod-pipeline`.
 
-Para produção, a autenticação deve migrar de connection string para identidade Microsoft Entra (`DefaultAzureCredential`), com o papel mínimo `Azure Event Hubs Data Sender`. Partições, throughput units, retenção, consumer groups e auto-inflate devem ser dimensionados por teste de carga. O produtor também precisa de idempotência: hoje o metadata de `event_id` só avança após todo o envio; se lotes iniciais forem aceitos e um lote posterior falhar, uma nova tentativa pode reutilizar IDs.
+Lakeflow consome o endpoint Kafka com OAuth. O pipeline é streaming quanto à
+fonte e ao checkpoint, mas opera em modo **triggered**, não contínuo: uma run
+drena os offsets disponíveis até Bronze, DQ, Silver e Gold e então encerra o
+compute. Isso é mais econômico para este case do que manter um cluster contínuo.
+A agenda horária está declarada, porém implantada `PAUSED`; com produtor ativo,
+ela deve ser ativada ou executada manualmente ao menos uma vez por dia para não
+exceder a retenção.
+
+A Bronze é imutável e guarda payload, partition, offset, enqueue time e SHA-256.
+Depois do parse e da limpeza, o DQ registra todas as violações. Qualquer evento
+inválido é encaminhado à quarentena e o `expect_or_fail` bloqueia a atualização
+inteira da Silver e, por dependência, da Gold. Eventos válidos são deduplicados
+por `event_id` com watermark de 25 horas, uma hora além da janela DQ de atraso
+aceita. As Gold publicam janelas de cinco
+minutos por paciente e uma hora para a população.
 
 ### 3.5 Camada Raw
 
@@ -566,11 +605,28 @@ Dados de saúde são dados pessoais sensíveis segundo a Lei nº 13.709/2018. Es
 | Expectation metrics | Lakeflow | Contagem de violações e falhas transacionais por `expect_or_fail` |
 | `dq_run_metrics` | DQX | `odate`, `input_rows`, `checked_rows`, `removed_by_cleaning` em `violation_summary`, válidos, quarentena, status, tabela e run ID |
 | `dq_promotion_control` | DQX/Silver | Única `odate` aprovada por estágio, atualizada somente depois que as cinco tabelas passam |
-| Tabelas de sistema `system.lakeflow.*` | Databricks | Histórico de jobs e última execução bem-sucedida |
-| Notificação por e-mail | Jobs DQX | Alerta de falha do gate |
-| Dashboard AI/BI | SQL Warehouse | Resultados DQ por tabela/estágio, linhas em quarentena e consultas de execuções |
+| Event log `vital_streaming_pipeline_events` | Lakeflow | Estado do update, volume/status por flow, expectations e backlog observado durante a run |
+| Tabelas de sistema `system.lakeflow.*` | Databricks | Estado e duração de Jobs e Pipeline, incluindo falha/cancelamento |
+| E-mail + Logic App Consumption | Jobs produtivos | Alerta event-driven de falha e duração excessiva, sem polling |
+| Dashboard AI/BI produtivo | SQL Warehouse | DQ batch por `odate`, DQ/flows streaming, frescor, latência, quarentena e reconciliação |
 
-O dashboard seleciona o `workspace_id` de dev ou prod a partir do catálogo corrente, considera somente versões atuais de jobs (`delete_time IS NULL`) e usa o estado `SUCCEEDED` registrado pela system table. Os contadores DQ representam resultados por tabela e estágio em `dq_run_metrics`, não gates completos. O painel ainda não mede freshness ponta a ponta, atraso S3/ADF/Auto Loader, throughput do Event Hubs, custo, SLA/SLO ou reconciliação de contagens entre as camadas.
+Toda a camada operacional foi concentrada em produção. Dev não possui dashboard,
+SQL Warehouse de observabilidade nem notificações. O dashboard produtivo é
+publicado com a credencial do service principal, permite somente `CAN_RUN` a
+`data-engineering-admin` e `data-engineering` e não expõe payload, mensagem de
+erro bruta ou `patient_id`. Não há refresh agendado, subscription, SQL Alert,
+Lakehouse Monitor nem tabela observacional materializada: as consultas rodam
+somente quando alguém abre/atualiza o painel. O Warehouse serverless é 2X-Small,
+máximo de um cluster, auto-stop de 10 minutos e o CI o para novamente após cada
+deploy.
+
+A Logic App `logic-healthlake-alerts-prod-brs-01` recebe somente webhooks de
+falha/duração do workspace produtivo. Ela é Consumption e tem trigger HTTP por
+evento, sem recurrence; o e-mail nativo do Job continua sendo o canal humano.
+O backlog mostrado é deliberadamente rotulado como observado no último refresh:
+com a Pipeline `IDLE`, o Databricks não conhece eventos que chegaram depois.
+Ainda não há custo financeiro/DBUs no painel, backlog realmente atual do Event
+Hubs, atraso S3/ADF ponta a ponta nem SLO formal.
 
 ### 3.14 **Escalabilidade**
 
@@ -579,8 +635,10 @@ Mecanismos existentes:
 - ADF processa os cinco datasets em paralelo (`isSequential: false`, `batchCount: 5`).
 - Auto Loader descobre arquivos incrementalmente e mantém checkpoint gerenciado.
 - Lakeflow Pipelines usa compute serverless e execução acionada, evitando cluster permanente.
-- O produtor Event Hubs agrupa eventos até o limite do lote.
-- A fila dos Jobs evita descartar uma nova run quando o limite de concorrência é atingido; os jobs dos gates DQ limitam `max_concurrent_runs` a 1.
+- O produtor Event Hubs agrupa eventos por paciente até o limite do lote; o
+  consumidor limita cada micro-batch a 10.000 offsets.
+- Os jobs batch usam fila; o streaming recusa sobreposição (`queue: false`),
+  não tenta novamente automaticamente e limita `max_concurrent_runs` a 1.
 - O SQL Warehouse é serverless, Photon e 2X-Small, com auto-stop de 10 minutos.
 
 Estratégias para crescimento:
@@ -598,9 +656,10 @@ O case ainda não comprova capacidade de grande volume por teste de carga. O DQX
 
 | Workflow | Gatilho | Ações |
 | --- | --- | --- |
-| `ci.yml` | Push/PR em `develop` ou `main` | Python 3.11, dependências, pytest, compileall e `bundle validate` dev; depois de um push aprovado em `main`, chama o deploy produtivo somente se todo o CI passar |
+| `ci.yml` | Push/PR em `develop` ou `main` | Python 3.11, suíte pytest incluindo ADF/IaC, compileall, Bicep pinado e `bundle validate` dev; depois de um push aprovado em `main`, chama o deploy produtivo somente se todo o CI passar |
 | `deploy-dev.yml` | Push em `develop` com mudança em `databricks/**` ou `.github/workflows/**`, ou execução manual | Valida e faz deploy do target `dev` |
-| `deploy-prod.yml` | Chamado automaticamente pelo CI de `main`, ou manualmente | Checkout do SHA aprovado, valida, planeja e faz deploy do target `prod`; batch só executa por chamada manual com opt-in e `odate` |
+| `deploy-prod.yml` | Chamado automaticamente pelo CI de `main`, ou manualmente | Checkout do SHA aprovado, valida, bloqueia planos destrutivos e faz deploy do target `prod`; batch só executa por chamada manual com opt-in e `odate` |
+| `run-streaming-prod.yml` | Execução manual confirmada em `main` | Valida o target implantado e drena o backlog uma vez com token idempotente por GitHub run, sem reenviar eventos |
 
 Os deploys usam OAuth M2M e GitHub Environments. Configure:
 
@@ -614,7 +673,19 @@ O `CODEOWNERS` e a proteção de `main` formam o gate humano: somente PR aprovad
 
 O caller de produção usa `secrets: inherit` para disponibilizar os secrets ao workflow reutilizável. Antes da validação do Bundle, o workflow rejeita secret vazio e confirma a identidade OAuth com uma chamada de controle que não inicia compute.
 
-O CI/CD atual executa os testes versionados e promove automaticamente o Bundle depois de um merge aprovado em `main`. Essa promoção não executa batch nem streaming. O processo ainda não provisiona cloud, não publica os artefatos ADF, não executa `unity_catalog_access.sql` e não faz smoke test end-to-end independente no workspace.
+O CI valida também os contratos de ambiente do ADF, Event Hubs e da Logic App
+produtiva. O script `adf/scripts/deploy.ps1` publica os artefatos com trigger
+parado; `infra/eventhub/scripts/deploy.ps1` faz validate/what-if, aplicação
+deliberada, RBAC e configuração/pós-check da service credential; e
+`infra/observability/scripts/deploy.ps1` cria a Logic App e reconcilia sua URL
+assinada diretamente na notification destination criptografada do Databricks,
+sem registrá-la no repositório.
+
+O CI/CD promove automaticamente o Bundle depois de um merge aprovado em
+`main`, sem executar batch ou streaming. Os scripts de fundação ainda precisam
+ser incorporados a workflows protegidos com federação OIDC; o fluxo automático
+também não aplica `unity_catalog_access.sql` nem executa smoke test cloud em
+todo commit.
 
 ---
 
@@ -631,15 +702,16 @@ O CI/CD atual executa os testes versionados e promove automaticamente o Bundle d
 - Databricks CLI `>= 1.9.0`.
 - Acesso de rede aos endpoints AWS/Azure.
 
-#### Recursos externos já provisionados
+#### Fundação cloud e recursos externos
 
-O repositório não cria estes recursos:
+O bootstrap completo ainda depende dos seguintes recursos. A linha do Event
+Hubs é a exceção já provisionada pelo Bicep deste repositório:
 
 - bucket S3 privado;
 - Azure Key Vault;
 - ADLS Gen2 com filesystem `raw`;
 - Azure Data Factory com managed identity;
-- Azure Event Hubs, apenas para a trilha opcional;
+- Azure Event Hubs de produção, provisionável por `infra/eventhub/main.bicep`;
 - workspace/região Azure Databricks com Unity Catalog e serverless habilitado para Lakeflow Pipelines, Jobs e SQL Warehouse;
 - catálogos `healthlake_dev` e `healthlake_prod`;
 - schemas `bronze`, `silver`, `gold`, `quarantine` e `observability`;
@@ -667,11 +739,14 @@ S3_BUCKET_NAME=<bucket-privado>
 AWS_REGION=<regiao-aws>
 
 # Opcionais: somente para envio de eventos.
-EVENTHUB_CONNECTION_STR=<connection-string>
-EVENTHUB_NAME=<event-hub>
+EVENTHUB_FULLY_QUALIFIED_NAMESPACE=evhns-healthlake-prod-brs-01.servicebus.windows.net
+EVENTHUB_NAME=evh-vitals-prod
 ```
 
-Não versione chaves. Para o Boto3, prefira perfil AWS, IAM Role ou credenciais temporárias. Se variáveis forem inevitáveis, use os nomes padrão reconhecidos pelo SDK e rotação frequente.
+Não versione chaves. O produtor usa `DefaultAzureCredential`: localmente, faça
+`az login` com uma identidade que tenha somente `Azure Event Hubs Data Sender`
+no hub; em automação, use uma workload identity dedicada. Para o Boto3, prefira
+perfil AWS, IAM Role ou credenciais temporárias.
 
 ### 4.4 Preparar ADF, Key Vault e ADLS
 
@@ -697,8 +772,14 @@ Antes do Bundle:
 4. Crie/sincronize os grupos de conta.
 5. Revise os nomes de catálogo no SQL e execute [`unity_catalog_access.sql`](databricks/src/governance/unity_catalog_access.sql) com uma identidade autorizada.
 6. Troque o e-mail default de alerta `dq_alert_email`.
-7. Confirme os `workspace_id` de dev/prod usados pelo dashboard.
-8. Revise `raw_root`, host e nomes de storage em [`databricks.yml`](databricks/databricks.yml).
+7. Implante `infra/observability` em produção e confirme o UUID não secreto em
+   `logic_app_notification_destination_id`.
+8. Como account/metastore admin, execute
+   [`observability_service_principal_access.prod.sql`](databricks/src/governance/observability_service_principal_access.prod.sql)
+   para conceder ao publicador somente `USE CATALOG`, `USE SCHEMA` e `SELECT`
+   em `system.lakeflow`; não conceda essas system tables aos grupos humanos.
+9. Confirme o `workspace_id`, Pipeline ID e Job ID produtivos usados pelo dashboard.
+10. Revise `raw_root`, host e nomes de storage em [`databricks.yml`](databricks/databricks.yml).
 
 Os Jobs e Pipelines têm `run_as` explícito por ambiente: o service principal
 `sp-healthlake-dev-pipeline` em dev e `sp-healthlake-prod-pipeline` em prod. Os
@@ -827,7 +908,7 @@ ORDER BY attendance_date DESC, attendance_count DESC
 LIMIT 20;
 ```
 
-### 4.11 Gerar e enviar eventos opcionais
+### 4.11 Gerar, enviar e processar eventos
 
 Execute este comando a partir da raiz do repositório. É necessário que `patient_id` no metadata seja maior que zero.
 
@@ -839,7 +920,20 @@ python .\data-generator\main.py `
   --send-eventhub
 ```
 
-Sem `--send-eventhub`, o JSONL é gerado localmente. Com a opção, o envio termina no Event Hubs; não espere tabelas Bronze/Gold de streaming.
+Sem `--send-eventhub`, o JSONL imutável é apenas gerado localmente. Com a opção,
+o producer envia por OAuth. O envio não liga compute no Databricks; para drenar
+o backlog uma vez até a Gold, execute o workflow `Run production streaming
+backlog` ou:
+
+```powershell
+Set-Location .\databricks
+databricks bundle run healthlake_vitals_streaming_refresh `
+  --target prod `
+  --profile HEALTHLAKE_PROD
+```
+
+Não reenvie o arquivo para repetir uma falha do consumidor: o checkpoint já
+preserva os offsets. A agenda do Job continua pausada após a execução manual.
 
 ### 4.12 Deploy de produção
 
@@ -848,7 +942,8 @@ Sem `--send-eventhub`, o JSONL é gerado localmente. Com a opção, o envio term
 3. Depois da aprovação e merge em `main`, acompanhe o CI. Se todos os testes e a validação dev passarem, ele chama automaticamente validate, plan e deploy de produção para o mesmo SHA.
 4. O deploy automático não executa dados e deixa o Warehouse de observabilidade parado.
 5. Para o batch mensal, confirme os cinco arquivos da mesma `odate` na Raw e execute manualmente `Deploy production` com `run_batch_refresh=true` e a data `YYYY-MM-DD`.
-6. Acompanhe o `healthlake_medallion_refresh` e execute os smoke tests funcionais.
+6. Para o streaming, execute separadamente `Run production streaming backlog` com confirmação explícita. Ele não gera nem reenvia eventos.
+7. Acompanhe o `healthlake_medallion_refresh`, o update Lakeflow, as métricas por flow, o backlog do Event Hubs e execute os smoke tests funcionais.
 
 ### 4.13 Roteiro de demonstração
 
@@ -876,6 +971,7 @@ Diagramas e código não substituem evidência de execução. O repositório nã
 | Bronze | Contagens por `odate`, `_source_file` e violações de expectations | Linhagem e volume reconciliados com a Raw; `odate_present` sem falha |
 | DQX | `dq_run_metrics`, `dq_promotion_control` e amostra da quarentena `_v2` para perfis clean/chaos | `removed_by_cleaning = input_rows - checked_rows` reconciliado; clean aprovado; qualquer violação remanescente no chaos bloqueia a tabela inteira |
 | Silver/Gold | Run ID do Job, contagens e consulta de `kpi_hospital_daily` | Os dois gates aprovados e produtos Gold populados |
+| Streaming | Métricas Incoming/Outgoing do Event Hubs, update ID, `num_output_rows` por flow e DQ expectations | Entrada = saída; Bronze/Silver/Gold reconciliadas; quarentena zero no canário válido |
 | Dashboard | Captura com horário, workspace e filtros visíveis | Métricas coerentes com a run demonstrada |
 
 Não publique chaves, connection strings, nomes de pessoas reais ou identificadores de conta nas capturas. Vincule as evidências ao commit e ao `odate` executados para que a demonstração seja auditável.
@@ -891,7 +987,8 @@ Não publique chaves, connection strings, nomes de pessoas reais ou identificado
 | Bundle não autentica | Revise host/profile ou variables/secrets OAuth M2M |
 | Gate DQX falha | Confirme o `--params "odate=YYYY-MM-DD"`, consulte `dq_run_metrics` para essa data e a tabela de quarentena com sufixo `_v2` |
 | Silver vazia | Confirme que as cinco Bronze têm linhas na `odate` solicitada e que `dq_promotion_control` aprovou `bronze_to_silver`; linhas legadas com `odate` nula exigem nova partição imutável ou full refresh controlado |
-| Dashboard sem jobs | Confirme o catálogo corrente, o `workspace_id` mapeado e o acesso às system tables; a consulta considera apenas `SUCCEEDED` e versões atuais não removidas |
+| Dashboard sem dados | Confirme a publicação com credencial do service principal, os IDs produtivos, o acesso dele às system tables e se existe uma run nos últimos 90 dias; abrir o painel inicia o Warehouse |
+| Backlog do painel parece antigo | É o backlog observado na última run; consulte Azure Monitor/Event Hubs para estado posterior ao momento exibido |
 | Testes do gerador falham | Execute `python -m pytest data-generator/tests -q` e revise o contrato dos perfis `clean`/`chaos` |
 
 ---
@@ -901,14 +998,14 @@ Não publique chaves, connection strings, nomes de pessoas reais ou identificado
 | Requisito do PDF | Evidência no case | Cobertura atual |
 | --- | --- | --- |
 | **Extração de Dados** | Faker/pandas, cinco snapshots CSV e eventos JSONL; diferentes distribuições e anomalias | Implementada com dados simulados |
-| **Ingestão de Dados** | Boto3 -> S3; ADF batch S3 -> ADLS; produtor Event Hubs | Batch versionado e manual; streaming parcial |
+| **Ingestão de Dados** | Boto3 -> S3; ADF batch S3 -> ADLS; Event Hubs -> Lakeflow | Batch versionado; streaming produtivo até Gold validado por canário |
 | **Armazenamento de Dados** | S3 landing, ADLS Raw, Delta Bronze/Silver/Gold | Implementado nos artefatos; infraestrutura é externa |
-| **Observabilidade** | Runs/retries do ADF, metadados de linhagem, métricas DQX, system tables, e-mail e dashboard | Parcial; falta visão ponta a ponta e SLO/freshness |
-| **Segurança de Dados** | Key Vault, managed identity declarada, OAuth M2M, GitHub Environments e Unity Catalog | Parcial; rede, rotação, auditoria e infraestrutura não estão automatizadas |
+| **Observabilidade** | Runs/retries do ADF, linhagem, DQX, event log, system tables, dashboard produtivo e alertas event-driven via Logic App | Parcial; cobre frescor/latência Databricks, mas faltam custo, backlog live, SLO e visão S3/ADF ponta a ponta |
+| **Segurança de Dados** | Key Vault, OAuth-only no Event Hubs, managed identity/service credential, OAuth M2M, GitHub Environments e Unity Catalog | Parcial; endpoint streaming ainda é público para o case sintético e o deployer usa client secret no CI |
 | **Mascaramento de Dados** | Máscaras na Silver/quarentena e remoção de nome, CPF, e-mail e telefone de pacientes da Gold | Versionado como minimização; regex de dígitos corrigido; Gold ainda contém dados pessoais/quasi-identificadores e não equivale a anonimização |
 | **Arquitetura de Dados** | Lakehouse Medallion, Spark distribuído, Delta e modelo estrela | Implementada no Bundle |
 | **Escalabilidade** | ADF paralelo, Auto Loader, serverless, filas e Event Hubs em lotes | Mecanismos presentes; sem teste de carga ou dimensionamento comprovado |
-| **Reprodutibilidade da Arquitetura** | Dependências pinadas do gerador, testes de perfis, JSON ADF, Bundle e workflows | Parcial; faltam bootstrap transacional, IaC cloud, deploy ADF e smoke test end-to-end |
+| **Reprodutibilidade da Arquitetura** | Dependências pinadas, testes, JSON ADF, Bicep Event Hubs/Logic App, Bundle e workflows | Parcial; faltam bootstrap transacional, IaC integral de S3/ADLS/Key Vault, deploy cloud automatizado e smoke test cloud |
 
 ---
 
@@ -922,13 +1019,14 @@ Não publique chaves, connection strings, nomes de pessoas reais ou identificado
 | P1 | Sobrescrita reutiliza o path já descoberto | Auto Loader não habilita `cloudFiles.allowOverwrites`; Raw muda, mas Bronze pode não reprocessar | Usar paths imutáveis por execução ou desenhar replay com overwrite, checkpoint e deduplicação |
 | P1 | O gate não impõe integridade referencial cruzada | O perfil `clean` reconcilia os dados gerados, mas uma fonte externa pode trazer FKs presentes que apontam para dimensões inexistentes | Adicionar anti-joins/regras DQ entre fatos e dimensões |
 | P1 | ADF e Databricks não estão encadeados | Operação manual, risco de partição parcial | Criar trigger/orquestrador e manifest de conclusão |
-| P1 | Infra cloud e governança-base não são IaC | **Reprodutibilidade da Arquitetura** incompleta | Adicionar Terraform/Bicep para AWS/Azure/Databricks e migrations de grants |
-| P1 | Streaming termina no Event Hubs | Não há análise em tempo real | Criar consumer Lakeflow, checkpoint, Bronze/Silver streaming e Gold temporal |
+| P1 | IaC cloud ainda é parcial | Event Hubs está em Bicep, mas S3, ADLS, Key Vault e a fundação Databricks não formam um bootstrap único | Completar Terraform/Bicep e migrations de grants |
+| P1 | Rede pública do Event Hubs | OAuth/TLS reduz o risco, mas não substitui isolamento para dados clínicos reais | Implementar Private Link/NCC e desabilitar acesso público antes do go-live real |
+| P1 | Data Sender humano usado no canário | Identidade pessoal em produção conflita com segregação de funções | Criar workload identity do producer e revogar o usuário com reconciliação explícita do RBAC |
 | P2 | Dashboard mapeia IDs físicos por catálogo | Recriar um workspace exige atualizar o JSON versionado | Automatizar a descoberta controlada de `workspace_id` por ambiente |
 | P2 | Actions fixadas por SHA exigem manutenção | O pin evita mudanças não revisadas, mas também não recebe correções automaticamente | Automatizar PRs controlados de atualização das actions |
 | P2 | PII integral permanece em Raw/Bronze | Acesso de engenharia aumenta superfície de risco | Reforçar least privilege, auditoria, retenção, tokenização e ambientes isolados |
-| P2 | Sem métricas de freshness, custo e reconciliação | Falhas silenciosas entre serviços | Adicionar SLOs, alertas e contagens/checksums por etapa |
-| P2 | `event_id` só avança após todo o envio | Falha após batches parciais pode reutilizar IDs na nova tentativa | Persistir progresso por batch e tornar produtor/consumidor idempotentes |
+| P2 | Observabilidade ainda não cobre custo e atraso S3/ADF/Event Hubs live | O painel mostra frescor/latência no Databricks e backlog da última run, não o estado externo atual | Adicionar SLOs e Azure Monitor seletivo, sem criar consultas Databricks agendadas |
+| P2 | Conflito de payload para o mesmo `event_id` não é distinguido | A deduplicação conserva somente um registro dentro do watermark | Alertar quando um UUID aparecer com outro `payload_sha256` |
 
 ### 6.2 Plano de implementação
 
@@ -950,7 +1048,7 @@ Pendências ainda verdadeiras:
 
 #### Fase 1 - Automatizar e reproduzir
 
-- Provisionar S3, Key Vault, ADLS, ADF, Event Hubs, Databricks e identidades por IaC.
+- Completar IaC de S3, Key Vault, ADLS, Databricks e identidades; Event Hubs já está em Bicep.
 - Publicar ADF por pipeline de deploy.
 - Aplicar schemas, storage credentials, external locations e grants como migrations.
 - Encadear geração/landing, ADF e Databricks com manifest e idempotência.
@@ -958,24 +1056,33 @@ Pendências ainda verdadeiras:
 
 #### Fase 2 - Produção segura e observável
 
-- Migrar connection strings/chaves long-lived para federação de identidade e credenciais temporárias.
+- Migrar o CI/CD de client secret para federação OIDC e usar workload identity dedicada no producer.
 - Isolar rede com private endpoints e bloquear acesso público.
-- Centralizar logs, auditoria, lineage, freshness, custo e alertas.
+- Integrar custo, auditoria ADF/S3 e métricas Azure Monitor à camada produtiva já centralizada, com limites de gasto.
 - Definir objetivo de ponto de recuperação (RPO), objetivo de tempo de recuperação (RTO), SLA/SLO, retenção, backup e resposta a incidentes.
 - Executar avaliação de impacto e controles organizacionais aplicáveis à LGPD.
 
 #### Fase 3 - Streaming e escala
 
-- Consumir Event Hubs com checkpoint e semântica idempotente.
-- Definir chave de partição, watermark, deduplicação e tratamento de eventos atrasados.
-- Criar produtos de sinais vitais quase em tempo real.
-- Testar volume/latência realistas e ajustar partições, throughput, compute e compactação.
+Concluídos: consumo Kafka OAuth com checkpoint, chave por paciente, Bronze
+imutável, DQ fail-closed pós-limpeza, quarentena, watermark/deduplicação e Gold
+temporal, dashboard produtivo e alerta event-driven de falha/duração. Pendente:
+testar volume/latência realistas, alertar lag/quarentena com sinal externo,
+definir SLO e ajustar partições, throughput, agenda, compute e compactação.
 
 ### 6.3 Considerações finais
 
 O projeto apresenta uma base coerente para um case de engenharia de dados: fontes sintéticas relacionais, integração multicloud, landing Raw, arquitetura Medallion, Spark/Delta, gates de qualidade, modelagem dimensional, governança por grupos, dashboard e deploy declarativo do Databricks.
 
-O principal mérito arquitetural é separar fidelidade, qualidade e consumo: a Raw preserva os bytes enquanto os objetos não forem sobrescritos; a Bronze infere tipos, exige uma `odate` extraível e mantém linhagem sem descartar silenciosamente chaves inválidas; o gate limpa e valida uma partição antes de aprovar conjuntamente as cinco entidades; a Silver padroniza e minimiza identificadores de pacientes; e a Gold publica produtos orientados a negócio, ainda contendo dados pessoais e quasi-identificadores. O caminho de código para uma execução limpa e fail-closed está implementado. O principal ponto de evolução continua operacional: transformar configurações externas e passos manuais em um bootstrap automatizado, testado e idempotente e em um smoke test cloud reproduzível. Streaming e conformidade permanecem capacidades parciais, não garantias.
+O principal mérito arquitetural é separar fidelidade, qualidade e consumo: no
+batch, a Raw preserva os bytes, a Bronze mantém linhagem, os gates validam uma
+única `odate` pós-limpeza e Silver/Gold só avançam em conjunto; no streaming, a
+Bronze preserva payload e offsets, o contrato v1 falha fechado antes da Silver
+e as Gold publicam produtos temporais. O caminho feliz streaming foi validado
+em produção com um canário pequeno. O principal ponto de evolução continua
+operacional: bootstrap integral por IaC, workload identity no producer, rede
+privada, alertas/SLO e smoke tests automatizados. Implementação não equivale a
+certificação de conformidade ou dimensionamento de produção real.
 
 ---
 
@@ -1021,11 +1128,18 @@ Fontes primárias e oficiais consultadas para fundamentar as escolhas. Acesso em
 - [Microsoft - Declarative Automation Bundles](https://learn.microsoft.com/en-us/azure/databricks/dev-tools/bundles/) - recursos Databricks como código e CI/CD.
 - [Microsoft - Jobs system tables no Azure Databricks](https://learn.microsoft.com/en-us/azure/databricks/admin/system-tables/jobs) - `system.lakeflow.jobs`, valores de estado e histórico SCD2.
 - [Microsoft - Conceitos de dashboards AI/BI](https://learn.microsoft.com/en-us/azure/databricks/dashboards/concepts) - datasets, visualizações e publicação.
+- [Microsoft - Event log de Pipelines](https://learn.microsoft.com/en-us/azure/databricks/ldp/monitor-event-logs) - status, flows, expectations e métricas streaming.
+- [Microsoft - Compartilhamento de dashboards](https://learn.microsoft.com/en-us/azure/databricks/dashboards/share/share) - credencial compartilhada e permissões do publisher.
+- [Microsoft - Notificações de Jobs](https://learn.microsoft.com/en-us/azure/databricks/jobs/notifications) - eventos de falha/duração e webhooks.
+- [Microsoft - Logic Apps e alertas](https://learn.microsoft.com/en-us/azure/azure-monitor/alerts/alerts-logic-apps) - integração event-driven de alertas.
 - [GitHub - Deployments and environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments) - secrets, variables e proteção de deploy.
 
 ### 7.5 Streaming e privacidade
 
 - [Microsoft - Enviar eventos ao Event Hubs com Python](https://learn.microsoft.com/en-us/azure/event-hubs/event-hubs-python-get-started-send) - produtor, autenticação e batches.
+- [Microsoft - Autenticação Kafka no Azure Databricks](https://learn.microsoft.com/en-us/azure/databricks/connect/streaming/kafka/authentication) - OAuth com service credentials.
+- [Microsoft - Service credentials do Unity Catalog](https://learn.microsoft.com/en-us/azure/databricks/connect/unity-catalog/cloud-services/service-credentials) - managed identity, grants e workspace binding.
+- [Microsoft - Streaming tables no Lakeflow](https://learn.microsoft.com/en-us/azure/databricks/ldp/concepts/streaming-tables) - checkpoints e processamento incremental.
 - [Microsoft - Event Hubs scalability](https://learn.microsoft.com/en-us/azure/event-hubs/event-hubs-scalability) - partições, throughput e auto-inflate.
 - [Brasil - Lei nº 13.709/2018, LGPD](https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2018/lei/l13709.htm) - dados sensíveis, princípios e segurança.
 - [ANPD - Guia Orientativo sobre Segurança da Informação para Agentes de Tratamento de Pequeno Porte](https://www.gov.br/anpd/pt-br/centrais-de-conteudo/materiais-educativos-e-publicacoes/guia-orientativo-sobre-seguranca-da-informacao-para-agentes-de-tratamento-de-pequeno-porte) - orientação setorial sobre medidas administrativas e técnicas; não é certificação geral de conformidade.
@@ -1033,4 +1147,7 @@ Fontes primárias e oficiais consultadas para fundamentar as escolhas. Acesso em
 
 ---
 
-Projeto acadêmico que documenta decisões, controles e trade-offs de uma arquitetura de engenharia de dados ponta a ponta; a execução integral depende da preparação do bootstrap e da infraestrutura cloud e deve ser comprovada por evidência de run no ambiente-alvo.
+Projeto acadêmico que documenta decisões, controles e trade-offs de uma
+arquitetura de engenharia de dados ponta a ponta. Batch e streaming possuem
+evidência de execução nos ambientes-alvo; um clone limpo ainda depende do
+bootstrap cloud documentado e não representa uma certificação de produção.
