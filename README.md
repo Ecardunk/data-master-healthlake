@@ -607,7 +607,7 @@ Dados de saúde são dados pessoais sensíveis segundo a Lei nº 13.709/2018. Es
 | `dq_promotion_control` | DQX/Silver | Única `odate` aprovada por estágio, atualizada somente depois que as cinco tabelas passam |
 | Event log `vital_streaming_pipeline_events` | Lakeflow | Estado do update, volume/status por flow, expectations e backlog observado durante a run |
 | Tabelas de sistema `system.lakeflow.*` | Databricks | Estado e duração de Jobs e Pipeline, incluindo falha/cancelamento |
-| E-mail + Logic App Consumption | Jobs produtivos | Alerta event-driven de falha e duração excessiva, sem polling |
+| E-mail + Logic App Consumption | Jobs Databricks e ADF produtivos | Webhooks de falha/duração e verificação mensal da ingestão S3 → ADLS no dia 05 |
 | Dashboard AI/BI produtivo | SQL Warehouse | DQ batch por `odate`, DQ/flows streaming, frescor, latência, quarentena e reconciliação |
 
 Toda a camada operacional foi concentrada em produção. Dev não possui dashboard,
@@ -620,9 +620,12 @@ somente quando alguém abre/atualiza o painel. O Warehouse serverless é 2X-Smal
 máximo de um cluster, auto-stop de 10 minutos e o CI o para novamente após cada
 deploy.
 
-A Logic App `logic-healthlake-alerts-prod-brs-01` recebe somente webhooks de
-falha/duração do workspace produtivo. Ela é Consumption e tem trigger HTTP por
-evento, sem recurrence; o e-mail nativo do Job continua sendo o canal humano.
+A Logic App `logic-healthlake-alerts-prod-brs-01` recebe webhooks de
+falha/duração do workspace produtivo e, no dia 05 às 23:55, consulta diretamente
+o histórico do ADF PROD. Se não existir uma run `Succeeded` de
+`pl_copy_s3_to_adls_raw` para a `odate` do dia 05, envia e-mail sem iniciar o
+pipeline. A identidade gerenciada possui somente as permissões de consulta de
+runs; DEV não possui Logic App, diagnostic setting nem Log Analytics.
 O backlog mostrado é deliberadamente rotulado como observado no último refresh:
 com a Pipeline `IDLE`, o Databricks não conhece eventos que chegaram depois.
 Ainda não há custo financeiro/DBUs no painel, backlog realmente atual do Event
@@ -1000,7 +1003,7 @@ Não publique chaves, connection strings, nomes de pessoas reais ou identificado
 | **Extração de Dados** | Faker/pandas, cinco snapshots CSV e eventos JSONL; diferentes distribuições e anomalias | Implementada com dados simulados |
 | **Ingestão de Dados** | Boto3 -> S3; ADF batch S3 -> ADLS; Event Hubs -> Lakeflow | Batch versionado; streaming produtivo até Gold validado por canário |
 | **Armazenamento de Dados** | S3 landing, ADLS Raw, Delta Bronze/Silver/Gold | Implementado nos artefatos; infraestrutura é externa |
-| **Observabilidade** | Runs/retries do ADF, linhagem, DQX, event log, system tables, dashboard produtivo e alertas event-driven via Logic App | Parcial; cobre frescor/latência Databricks, mas faltam custo, backlog live, SLO e visão S3/ADF ponta a ponta |
+| **Observabilidade** | Runs/retries do ADF, verificação mensal da ingestão produtiva, linhagem, DQX, event log, system tables, dashboard e alertas via Logic App | Parcial; cobre a ausência da carga ADF e frescor/latência Databricks, mas faltam custo, backlog live e SLO formal |
 | **Segurança de Dados** | Key Vault, OAuth-only no Event Hubs, managed identity/service credential, OAuth M2M, GitHub Environments e Unity Catalog | Parcial; endpoint streaming ainda é público para o case sintético e o deployer usa client secret no CI |
 | **Mascaramento de Dados** | Máscaras na Silver/quarentena e remoção de nome, CPF, e-mail e telefone de pacientes da Gold | Versionado como minimização; regex de dígitos corrigido; Gold ainda contém dados pessoais/quasi-identificadores e não equivale a anonimização |
 | **Arquitetura de Dados** | Lakehouse Medallion, Spark distribuído, Delta e modelo estrela | Implementada no Bundle |
@@ -1066,7 +1069,8 @@ Pendências ainda verdadeiras:
 
 Concluídos: consumo Kafka OAuth com checkpoint, chave por paciente, Bronze
 imutável, DQ fail-closed pós-limpeza, quarentena, watermark/deduplicação e Gold
-temporal, dashboard produtivo e alerta event-driven de falha/duração. Pendente:
+temporal, dashboard produtivo, alerta event-driven de falha/duração e monitor
+mensal do ADF PROD no dia 05. Pendente:
 testar volume/latência realistas, alertar lag/quarentena com sinal externo,
 definir SLO e ajustar partições, throughput, agenda, compute e compactação.
 
