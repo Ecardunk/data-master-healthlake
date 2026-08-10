@@ -141,13 +141,22 @@ def test_alerts_are_event_driven_and_only_overlaid_on_production_jobs():
 
 def test_production_deploy_always_leaves_the_observability_warehouse_stopped():
     workflow = PRODUCTION_WORKFLOW.read_text(encoding="utf-8")
+    cleanup_step = workflow.split(
+        "- name: Leave observability warehouse stopped", 1
+    )[1].split("- name: Run production refresh", 1)[0]
 
     assert "Leave observability warehouse stopped" in workflow
     assert "if: always()" in workflow
-    assert "healthlake_observability_warehouse.id" in workflow
+    assert "OBSERVABILITY_WAREHOUSE_NAME: healthlake-observability-prod" in workflow
+    assert "databricks warehouses list --output json" in workflow
+    assert "databricks bundle summary" not in workflow
+    assert "--force-pull" not in workflow
     assert 'databricks warehouses stop "$warehouse_id"' in workflow
     assert 'databricks warehouses get "$warehouse_id"' in workflow
     assert 'if [[ "$state" == "STOPPED" ]]' in workflow
+    assert 'if [[ "$state" != "STOPPING" ]]' in workflow
+    assert "Observability warehouse is absent; nothing to stop." in workflow
+    assert "working-directory:" not in cleanup_step
     assert workflow.index("Deploy production target") < workflow.index(
         "Leave observability warehouse stopped"
     )

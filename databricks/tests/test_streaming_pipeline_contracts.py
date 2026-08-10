@@ -134,6 +134,9 @@ def test_streaming_dq_quarantines_and_blocks_the_whole_silver_update():
 def test_paid_prod_runs_are_explicit_and_separate_from_deploy():
     deploy = DEPLOY_PROD_WORKFLOW.read_text(encoding="utf-8")
     streaming = RUN_STREAMING_WORKFLOW.read_text(encoding="utf-8")
+    paid_run_step = streaming.split(
+        "- name: Consume the backlog once through Bronze, Silver, and Gold", 1
+    )[1]
 
     assert "run_batch_refresh:" in deploy
     assert "default: false" in deploy
@@ -142,7 +145,11 @@ def test_paid_prod_runs_are_explicit_and_separate_from_deploy():
 
     assert "confirm_run:" in streaming
     assert "confirm_run must be enabled" in streaming
-    assert streaming.count("healthlake_vitals_streaming_refresh") == 1
+    assert "STREAMING_JOB_NAME: healthlake-vitals-streaming-refresh-prod" in streaming
+    assert 'databricks jobs list --name "$STREAMING_JOB_NAME"' in streaming
     assert "jobs run-now" in streaming
     assert '--idempotency-token "gh-${GITHUB_RUN_ID}"' in streaming
+    assert "databricks bundle summary" not in streaming
+    assert "--force-pull" not in streaming
     assert "bundle deploy" not in streaming
+    assert "working-directory:" not in paid_run_step

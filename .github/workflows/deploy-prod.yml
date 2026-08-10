@@ -45,6 +45,7 @@ jobs:
       DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
       DATABRICKS_CLIENT_ID: ${{ vars.DATABRICKS_CLIENT_ID }}
       DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+      OBSERVABILITY_WAREHOUSE_NAME: healthlake-observability-prod
       ODATE: ${{ inputs.odate }}
       RUN_BATCH_REFRESH: ${{ inputs.run_batch_refresh }}
     steps:
@@ -135,19 +136,36 @@ jobs:
         # Preserve an earlier failure, but fail the deployment when this is the
         # only failing step and production compute could remain running.
         continue-on-error: ${{ job.status != 'success' }}
-        working-directory: databricks
         shell: bash
         run: |
           set -euo pipefail
-          warehouse_id="$(
-            databricks bundle summary --target prod --output json --force-pull |
-              jq -er '.resources.sql_warehouses.healthlake_observability_warehouse.id'
+          warehouse_list="$(databricks warehouses list --output json)"
+          warehouse_ids="$(
+            jq -ce --arg name "$OBSERVABILITY_WAREHOUSE_NAME" '
+              [.[] | select(.name == $name) | .id]
+            ' <<< "$warehouse_list"
           )"
+          warehouse_count="$(jq -er 'length' <<< "$warehouse_ids")"
+
+          if [[ "$warehouse_count" == "0" ]]; then
+            echo "Observability warehouse is absent; nothing to stop."
+            exit 0
+          fi
+          if [[ "$warehouse_count" != "1" ]]; then
+            echo "Expected exactly one observability warehouse, found $warehouse_count." >&2
+            exit 1
+          fi
+
+          warehouse_id="$(jq -er '.[0]' <<< "$warehouse_ids")"
           state="$(
             databricks warehouses get "$warehouse_id" --output json |
               jq -er '.state'
           )"
-          if [[ "$state" != "STOPPED" ]]; then
+          if [[ "$state" == "STOPPED" ]]; then
+            echo "Observability warehouse is stopped."
+            exit 0
+          fi
+          if [[ "$state" != "STOPPING" ]]; then
             databricks warehouses stop "$warehouse_id" >/dev/null
           fi
           for attempt in $(seq 1 30); do
