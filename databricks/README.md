@@ -120,14 +120,15 @@ somente essa data e não duplica nem reprocessa o histórico.
 O default do parâmetro de Job é vazio e não usa o relógio como fallback;
 `--params "odate=YYYY-MM-DD"` é obrigatório para uma execução válida.
 
-Cada tarefa Python serverless publica progresso no painel **Output** do
-Databricks como uma linha JSON prefixada por `[healthlake]`, com envio imediato
-via `flush=True`. Os eventos informam início e fim da tarefa, `odate`, tabela em
-processamento, validação e estratégia da escrita Delta, verificação da aprovação
-entre camadas e, nos gates DQX, contagens de entrada, registros verificados,
-válidos e enviados à quarentena. Falhas também produzem um evento `task_failed`
-antes de manter a exceção original. Os logs contêm somente metadados operacionais
-e nunca imprimem registros nem identificadores de pacientes.
+Cada tarefa Python serverless publica progresso amigável no painel **Output** do
+Databricks, com horário UTC, emojis e envio imediato via `flush=True`. Linhas
+como `🚀 [BRONZE] Execução iniciada`, `🧪 [DQX] Regras de qualidade avaliadas` e
+`✅ [DELTA] Partição Delta substituída` tornam o andamento fácil de acompanhar.
+Os detalhes mostram `odate`, tabela, estratégia de escrita e, nos gates DQX,
+contagens de entrada, registros verificados, válidos e enviados à quarentena.
+Erros permanecem em uma única linha e são limitados a 500 caracteres. Os logs
+contêm somente metadados operacionais e nunca imprimem registros nem
+identificadores de pacientes.
 
 ## Semântica fail-closed dos gates
 

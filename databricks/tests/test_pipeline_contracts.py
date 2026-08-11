@@ -83,7 +83,7 @@ def test_medallion_layers_do_not_silently_drop_failed_rows():
         assert "expect_or_drop" not in source.read_text(encoding="utf-8")
 
 
-def test_all_serverless_python_tasks_emit_flushable_structured_progress_logs():
+def test_all_serverless_python_tasks_emit_flushable_friendly_progress_logs():
     helpers = BATCH_HELPERS.read_text(encoding="utf-8")
     task_sources = [
         BRONZE_INGESTION,
@@ -92,9 +92,14 @@ def test_all_serverless_python_tasks_emit_flushable_structured_progress_logs():
         GOLD_MARTS,
     ]
 
-    assert "json.dumps(payload" in helpers
-    assert 'f"[healthlake]' in helpers
+    assert '"🚀", "Execução iniciada"' in helpers
+    assert '"🎉", "Execução concluída"' in helpers
+    assert '"❌", "Execução falhou"' in helpers
+    assert '"📦", "Processando tabela"' in helpers
+    assert 'strftime("%H:%M:%S UTC")' in helpers
+    assert '"  •  ".join(' in helpers
     assert "flush=True" in helpers
+    assert "except UnicodeEncodeError:" in helpers
     for task_source in task_sources:
         source = task_source.read_text(encoding="utf-8")
         assert "log_status(" in source
