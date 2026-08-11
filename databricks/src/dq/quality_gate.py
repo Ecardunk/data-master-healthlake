@@ -683,7 +683,6 @@ def main():
             odate=args.odate,
             run_id=args.run_id,
             error_type=type(error).__name__,
-            error=str(error),
         )
         raise
     log_status(

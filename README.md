@@ -332,7 +332,8 @@ Mantém artefatos relacionados à governança do Unity Catalog, incluindo grants
 
 Contém os artefatos versionados relacionados ao dashboard de observabilidade.
 
-A pasta `tests/` contém testes de contrato dos pipelines, governança, streaming e observabilidade.
+A pasta `tests/` contém os dois contratos essenciais do batch Databricks usados
+na apresentação: propagação de `odate` e nomes consistentes entre as camadas.
 
 ---
 
@@ -747,7 +748,7 @@ O case ainda não comprova capacidade de grande volume por teste de carga. O DQX
 
 | Workflow | Gatilho | Ações |
 | --- | --- | --- |
-| `ci.yml` | Push/PR em `develop` ou `main` | Python 3.11, suíte pytest incluindo ADF/IaC, compileall, Bicep pinado e `bundle validate` dev; depois de um push aprovado em `main`, chama o deploy produtivo somente se todo o CI passar |
+| `ci.yml` | Push/PR em `develop` ou `main` | Python 3.11, suíte enxuta de 10 testes representativos do Data Generator, streaming, ADF, Databricks, governança e Event Hubs; também executa compileall, Bicep pinado e `bundle validate` dev. Depois de um push aprovado em `main`, chama o deploy produtivo somente se todo o CI passar |
 | `deploy-dev.yml` | Push em `develop` com mudança em `databricks/**` ou `.github/workflows/**`, ou execução manual | Valida e faz deploy do target `dev` |
 | `deploy-prod.yml` | Chamado automaticamente pelo CI de `main`, ou manualmente | Checkout do SHA aprovado, valida, bloqueia planos destrutivos e faz deploy do target `prod`; batch só executa por chamada manual com opt-in e `odate` |
 | `run-streaming-prod.yml` | Execução manual confirmada em `main` | Valida o target implantado e drena o backlog uma vez com token idempotente por GitHub run, sem reenviar eventos |

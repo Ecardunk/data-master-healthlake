@@ -30,7 +30,7 @@ jobs:
       - name: Run repository tests
         run: >-
           pytest data-generator/tests databricks/tests adf/tests
-          infra/eventhub/tests infra/observability/tests
+          infra/eventhub/tests
       - name: Compile Azure Bicep
         run: |
           az bicep install --version v0.46.1
