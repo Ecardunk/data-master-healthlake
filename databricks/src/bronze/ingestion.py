@@ -16,6 +16,7 @@ if str(SOURCE_ROOT) not in sys.path:
 
 from common.batch import (  # noqa: E402
     TABLE_NAMES,
+    log_status,
     parse_iso_date,
     replace_odate_partition,
     require_nonempty_partition,
@@ -25,28 +26,28 @@ from common.batch import (  # noqa: E402
 ODATE_PATH_PATTERN = r"(?:^|/)odate=(\d{4}-\d{2}-\d{2})(?:/|$)"
 RAW_SCHEMAS = {
     "patients": """
-        patient_id BIGINT, full_name STRING, cpf STRING, email STRING,
+        patient_id STRING, full_name STRING, cpf STRING, email STRING,
         phone STRING, gender STRING, blood_type STRING, birth_date STRING,
         city STRING, state STRING, created_at STRING, _corrupt_record STRING
     """,
     "hospitals": """
-        hospital_id BIGINT, hospital_name STRING, hospital_type STRING,
-        state STRING, city STRING, capacity DOUBLE, created_at STRING,
+        hospital_id STRING, hospital_name STRING, hospital_type STRING,
+        state STRING, city STRING, capacity STRING, created_at STRING,
         _corrupt_record STRING
     """,
     "doctors": """
-        doctor_id BIGINT, doctor_name STRING, crm DOUBLE, specialty STRING,
-        hospital_id BIGINT, created_at STRING, _corrupt_record STRING
+        doctor_id STRING, doctor_name STRING, crm STRING, specialty STRING,
+        hospital_id STRING, created_at STRING, _corrupt_record STRING
     """,
     "diseases": """
-        disease_id BIGINT, disease_name STRING, category STRING,
-        severity_level DOUBLE, created_at STRING, _corrupt_record STRING
+        disease_id STRING, disease_name STRING, category STRING,
+        severity_level STRING, created_at STRING, _corrupt_record STRING
     """,
     "attendance": """
-        attendance_id BIGINT, patient_id BIGINT, doctor_id BIGINT,
-        hospital_id BIGINT, disease_id BIGINT, attendance_date STRING,
-        wait_time_minutes DOUBLE, cost DECIMAL(12,2), severity_score DOUBLE,
-        discharge_flag DOUBLE, created_at STRING, _corrupt_record STRING
+        attendance_id STRING, patient_id STRING, doctor_id STRING,
+        hospital_id STRING, disease_id STRING, attendance_date STRING,
+        wait_time_minutes STRING, cost STRING, severity_score STRING,
+        discharge_flag STRING, created_at STRING, _corrupt_record STRING
     """,
 }
 
@@ -73,24 +74,68 @@ def read_raw_csv(spark, raw_root: str, dataset_name: str, odate):
         .option("columnNameOfCorruptRecord", "_corrupt_record")
         .option("pathGlobFilter", "*.csv")
         .load(partition_path)
-        .withColumn("_source_file", F.input_file_name())
+        .withColumn("_source_file", F.col("_metadata.file_path"))
         .withColumn("_ingested_at", F.current_timestamp())
         .withColumn("odate", F.lit(odate).cast("date"))
     )
 
 
-def main():
-    args = parse_args()
-    spark = SparkSession.builder.getOrCreate()
-
+def run_ingestion(args, spark):
     for table_name in TABLE_NAMES:
         target_table = f"{args.catalog}.bronze.{table_name}"
+        source_path = (
+            f"{args.raw_root.rstrip('/')}/{table_name}/"
+            f"odate={args.odate.isoformat()}"
+        )
+        log_status(
+            "bronze",
+            "table_started",
+            table=target_table,
+            source_path=source_path,
+            odate=args.odate,
+        )
         partition = require_nonempty_partition(
             read_raw_csv(spark, args.raw_root, table_name, args.odate),
             target_table,
             args.odate,
         )
         replace_odate_partition(spark, partition, target_table, args.odate)
+        log_status(
+            "bronze",
+            "table_completed",
+            table=target_table,
+            odate=args.odate,
+        )
+
+
+def main():
+    args = parse_args()
+    log_status(
+        "bronze",
+        "task_started",
+        catalog=args.catalog,
+        odate=args.odate,
+        table_count=len(TABLE_NAMES),
+    )
+    try:
+        run_ingestion(args, SparkSession.builder.getOrCreate())
+    except Exception as error:
+        log_status(
+            "bronze",
+            "task_failed",
+            catalog=args.catalog,
+            odate=args.odate,
+            error_type=type(error).__name__,
+            error=str(error),
+        )
+        raise
+    log_status(
+        "bronze",
+        "task_completed",
+        catalog=args.catalog,
+        odate=args.odate,
+        processed_tables=len(TABLE_NAMES),
+    )
 
 
 if __name__ == "__main__":

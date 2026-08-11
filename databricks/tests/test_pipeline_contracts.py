@@ -6,6 +6,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BRONZE_INGESTION = REPO_ROOT / "databricks" / "src" / "bronze" / "ingestion.py"
 BATCH_HELPERS = REPO_ROOT / "databricks" / "src" / "common" / "batch.py"
+QUALITY_GATE = REPO_ROOT / "databricks" / "src" / "dq" / "quality_gate.py"
+SILVER_TRANSFORMS = REPO_ROOT / "databricks" / "src" / "silver" / "transforms.py"
+GOLD_MARTS = REPO_ROOT / "databricks" / "src" / "gold" / "marts.py"
 MEDALLION_JOB = REPO_ROOT / "databricks" / "resources" / "medallion.job.yml"
 PRODUCTION_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "deploy-prod.yml"
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
@@ -46,13 +49,27 @@ def test_bronze_odate_regex_matches_the_adf_path_contract():
     assert re.search(pattern, "/patients/not-odate=2026-08-06/patients.csv") is None
 
 
-def test_bronze_uses_stable_explicit_schemas_for_decimal_like_csv_values():
+def test_bronze_preserves_source_values_as_text_before_silver_casts():
     schemas = assigned_literal(BRONZE_INGESTION, "RAW_SCHEMAS")
 
-    assert "crm DOUBLE" in schemas["doctors"]
-    assert "capacity DOUBLE" in schemas["hospitals"]
-    assert "severity_score DOUBLE" in schemas["attendance"]
-    assert "cost DECIMAL(12,2)" in schemas["attendance"]
+    assert "crm STRING" in schemas["doctors"]
+    assert "hospital_id STRING" in schemas["doctors"]
+    assert "capacity STRING" in schemas["hospitals"]
+    assert "severity_score STRING" in schemas["attendance"]
+    assert "cost STRING" in schemas["attendance"]
+
+    cleaning = (
+        REPO_ROOT / "databricks" / "src" / "silver" / "cleaning.py"
+    ).read_text(encoding="utf-8")
+    assert "try_cast(" in cleaning
+    assert "try_integral(" in cleaning
+
+
+def test_bronze_uses_unity_catalog_compatible_file_metadata():
+    source = BRONZE_INGESTION.read_text(encoding="utf-8")
+
+    assert 'F.col("_metadata.file_path")' in source
+    assert "input_file_name" not in source
 
 
 def test_medallion_layers_do_not_silently_drop_failed_rows():
@@ -64,6 +81,33 @@ def test_medallion_layers_do_not_silently_drop_failed_rows():
 
     for source in pipeline_sources:
         assert "expect_or_drop" not in source.read_text(encoding="utf-8")
+
+
+def test_all_serverless_python_tasks_emit_flushable_structured_progress_logs():
+    helpers = BATCH_HELPERS.read_text(encoding="utf-8")
+    task_sources = [
+        BRONZE_INGESTION,
+        QUALITY_GATE,
+        SILVER_TRANSFORMS,
+        GOLD_MARTS,
+    ]
+
+    assert "json.dumps(payload" in helpers
+    assert 'f"[healthlake]' in helpers
+    assert "flush=True" in helpers
+    for task_source in task_sources:
+        source = task_source.read_text(encoding="utf-8")
+        assert "log_status(" in source
+        assert '"task_started"' in source
+        assert '"task_completed"' in source
+        assert '"task_failed"' in source
+        assert '"table_started"' in source
+
+    quality_gate = QUALITY_GATE.read_text(encoding="utf-8")
+    assert '"source_count_completed"' in quality_gate
+    assert '"checks_completed"' in quality_gate
+    assert '"metrics_write_completed"' in quality_gate
+    assert '"approval_write_completed"' in quality_gate
 
 
 def test_gate_requires_odate_and_applies_cleaning_before_checks():
@@ -110,6 +154,9 @@ def test_all_batch_layers_process_and_replace_only_the_requested_odate():
 
     assert '.option("replaceWhere", f"odate = DATE' in helpers
     assert '.partitionBy("odate")' in helpers
+    assert 'mode("errorifexists")' not in helpers
+    assert '.option("overwriteSchema", "true")' in helpers
+    assert "the table contains historical odate partitions" in helpers
     assert 'odate={odate.isoformat()}' in bronze
     assert '.where(F.col("odate") == F.lit(odate))' in silver
     assert '.where(F.col("odate") == F.lit(odate))' in gold

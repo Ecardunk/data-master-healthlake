@@ -28,6 +28,18 @@ CLEANUP_DROP_NULLS = {
 }
 
 
+def try_cast(column_name: str, data_type: str):
+    """Cast source text without turning malformed raw values into Spark errors."""
+    return F.expr(f"try_cast(`{column_name}` AS {data_type})")
+
+
+def try_integral(column_name: str, data_type: str):
+    """Accept integer CSV values serialized with a decimal suffix, such as 17.0."""
+    return F.expr(
+        f"try_cast(try_cast(`{column_name}` AS DOUBLE) AS {data_type})"
+    )
+
+
 def with_effective_odate(dataframe):
     """Recover a missing odate from the immutable source path in memory."""
     path_odate = F.to_date(
@@ -79,17 +91,17 @@ def deduplicate_snapshot(dataframe, key_column: str):
 def clean_patients(dataframe):
     masks = mask_patient_pii()
     return dataframe.select(
-        F.col("patient_id").cast("bigint").alias("patient_id"),
+        try_integral("patient_id", "BIGINT").alias("patient_id"),
         masks["full_name"].alias("full_name"),
         masks["cpf"].alias("cpf"),
         masks["email"].alias("email"),
         masks["phone"].alias("phone"),
         F.upper(F.trim("gender")).alias("gender"),
         F.upper(F.trim("blood_type")).alias("blood_type"),
-        F.to_date("birth_date").alias("birth_date"),
+        try_cast("birth_date", "DATE").alias("birth_date"),
         F.trim("city").alias("city"),
         F.upper(F.trim("state")).alias("state"),
-        F.to_timestamp("created_at").alias("created_at"),
+        try_cast("created_at", "TIMESTAMP").alias("created_at"),
         F.col("odate"),
         F.col("_source_file"),
         F.col("_ingested_at"),
@@ -98,13 +110,13 @@ def clean_patients(dataframe):
 
 def clean_hospitals(dataframe):
     return dataframe.select(
-        F.col("hospital_id").cast("bigint").alias("hospital_id"),
+        try_integral("hospital_id", "BIGINT").alias("hospital_id"),
         F.trim("hospital_name").alias("hospital_name"),
         F.trim("hospital_type").alias("hospital_type"),
         F.upper(F.trim("state")).alias("state"),
         F.trim("city").alias("city"),
-        F.col("capacity").cast("int").alias("capacity"),
-        F.to_timestamp("created_at").alias("created_at"),
+        try_integral("capacity", "INT").alias("capacity"),
+        try_cast("created_at", "TIMESTAMP").alias("created_at"),
         F.col("odate"),
         F.col("_source_file"),
         F.col("_ingested_at"),
@@ -113,12 +125,12 @@ def clean_hospitals(dataframe):
 
 def clean_doctors(dataframe):
     return dataframe.select(
-        F.col("doctor_id").cast("bigint").alias("doctor_id"),
+        try_integral("doctor_id", "BIGINT").alias("doctor_id"),
         F.trim("doctor_name").alias("doctor_name"),
-        F.col("crm").cast("bigint").alias("crm"),
+        try_integral("crm", "BIGINT").alias("crm"),
         F.trim("specialty").alias("specialty"),
-        F.col("hospital_id").cast("bigint").alias("hospital_id"),
-        F.to_timestamp("created_at").alias("created_at"),
+        try_integral("hospital_id", "BIGINT").alias("hospital_id"),
+        try_cast("created_at", "TIMESTAMP").alias("created_at"),
         F.col("odate"),
         F.col("_source_file"),
         F.col("_ingested_at"),
@@ -127,11 +139,11 @@ def clean_doctors(dataframe):
 
 def clean_diseases(dataframe):
     return dataframe.select(
-        F.col("disease_id").cast("bigint").alias("disease_id"),
+        try_integral("disease_id", "BIGINT").alias("disease_id"),
         F.trim("disease_name").alias("disease_name"),
         F.trim("category").alias("category"),
-        F.col("severity_level").cast("int").alias("severity_level"),
-        F.to_timestamp("created_at").alias("created_at"),
+        try_integral("severity_level", "INT").alias("severity_level"),
+        try_cast("created_at", "TIMESTAMP").alias("created_at"),
         F.col("odate"),
         F.col("_source_file"),
         F.col("_ingested_at"),
@@ -139,25 +151,25 @@ def clean_diseases(dataframe):
 
 
 def clean_attendance(dataframe, include_quality_columns: bool = False):
-    discharge_flag = F.col("discharge_flag").cast("int")
+    discharge_flag = try_integral("discharge_flag", "INT")
     columns = [
-        F.col("attendance_id").cast("bigint").alias("attendance_id"),
-        F.col("patient_id").cast("bigint").alias("patient_id"),
-        F.col("doctor_id").cast("bigint").alias("doctor_id"),
-        F.col("hospital_id").cast("bigint").alias("hospital_id"),
-        F.col("disease_id").cast("bigint").alias("disease_id"),
-        F.to_timestamp("attendance_date").alias("attendance_timestamp"),
-        F.to_date("attendance_date").alias("attendance_date"),
-        F.col("wait_time_minutes").cast("int").alias("wait_time_minutes"),
-        F.col("cost").cast("decimal(12,2)").alias("cost"),
-        F.col("severity_score").cast("int").alias("severity_score"),
+        try_integral("attendance_id", "BIGINT").alias("attendance_id"),
+        try_integral("patient_id", "BIGINT").alias("patient_id"),
+        try_integral("doctor_id", "BIGINT").alias("doctor_id"),
+        try_integral("hospital_id", "BIGINT").alias("hospital_id"),
+        try_integral("disease_id", "BIGINT").alias("disease_id"),
+        try_cast("attendance_date", "TIMESTAMP").alias("attendance_timestamp"),
+        try_cast("attendance_date", "DATE").alias("attendance_date"),
+        try_integral("wait_time_minutes", "INT").alias("wait_time_minutes"),
+        try_cast("cost", "DECIMAL(12,2)").alias("cost"),
+        try_integral("severity_score", "INT").alias("severity_score"),
     ]
     if include_quality_columns:
         columns.append(discharge_flag.alias("discharge_flag"))
     columns.extend(
         [
             (discharge_flag == 1).alias("is_discharged"),
-            F.to_timestamp("created_at").alias("created_at"),
+            try_cast("created_at", "TIMESTAMP").alias("created_at"),
             F.col("odate"),
             F.col("_source_file"),
             F.col("_ingested_at"),
