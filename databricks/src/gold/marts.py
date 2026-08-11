@@ -7,6 +7,9 @@ from pathlib import Path
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 
+SOURCE_ROOT = Path(sys.argv[0]).resolve().parents[1]
+if str(SOURCE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SOURCE_ROOT))
 
 SOURCE_ROOT = Path(sys.argv[0]).resolve().parents[1]
 if str(SOURCE_ROOT) not in sys.path:

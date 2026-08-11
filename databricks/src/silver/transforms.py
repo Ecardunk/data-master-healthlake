@@ -7,6 +7,8 @@ from pathlib import Path
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 
+from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
 
 SOURCE_ROOT = Path(sys.argv[0]).resolve().parents[1]
 if str(SOURCE_ROOT) not in sys.path:
@@ -67,6 +69,12 @@ def run_transforms(args, spark):
             odate=args.odate,
         )
 
+def main():
+    args = parse_args()
+    spark = SparkSession.builder.getOrCreate()
+    require_gate_approval(
+        spark, args.catalog, "bronze_to_silver", args.odate
+    )
 
 def main():
     args = parse_args()
