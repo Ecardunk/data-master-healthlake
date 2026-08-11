@@ -697,7 +697,25 @@ Para uso real, também são necessários: bloqueio de acesso público, TLS obrig
 | Event log `vital_streaming_pipeline_events` | Lakeflow | Estado do update, volume/status por flow, expectations e backlog observado durante a run |
 | Tabelas de sistema `system.lakeflow.*` | Databricks | Estado e duração de Jobs e Pipeline, incluindo falha/cancelamento |
 | E-mail + Logic App Consumption | Jobs Databricks e ADF produtivos | Webhooks de falha/duração e verificação mensal da ingestão S3 → ADLS no dia 05 |
-| Dashboard AI/BI produtivo | SQL Warehouse | DQ batch por `odate`, DQ/flows streaming, frescor, latência, quarentena e reconciliação |
+| Dashboard AI/BI produtivo | SQL Warehouse | Três páginas para Jobs batch/DQX, Pipeline streaming e qualidade: falhas/cancelamentos, duração, execuções atuais, DQ por `odate`, frescor Gold, flows, backlog observado, latência, quarentena e reconciliação |
+
+#### Dashboard operacional
+
+O dashboard `HealthLake Observability - prod` foi organizado para separar
+operação, desempenho e qualidade sem misturar payload clínico com telemetria:
+
+| Página | Indicadores e gráficos | Uso durante uma investigação |
+| --- | --- | --- |
+| **Operação batch** | Falhas/cancelamentos nos últimos 90 dias, Jobs em execução, duração da última run, tendência de duração por Job, distribuição de falhas, histórico das execuções, quarentena por `odate` e frescor das seis tabelas Gold | Identificar o Job ou gate DQX que falhou, confirmar a partição afetada e detectar aumento de duração ou Gold desatualizada |
+| **Operação streaming** | Updates e Jobs com falha, duração do último update, histórico de estados, saída por flow e backlog observado no último refresh | Diferenciar falha do Job orquestrador de falha da Pipeline, localizar o flow afetado e avaliar se a execução drenou o backlog conhecido |
+| **Qualidade e frescor** | Idade do evento mais recente, violações do último update, tabelas DQ batch com falha, validações executadas por dataset, quarentena por regra, latência p95 e registros removidos na limpeza por gate | Relacionar atraso ou falha operacional com regras de qualidade, reconciliação e quarentena, sem consultar dados sensíveis |
+
+Os cartões de falha usam uma linha-resumo mesmo quando o resultado é zero. Em
+gráficos de quarentena, `No data` significa que a consulta não encontrou
+violações no período; o cartão numérico da mesma página diferencia esse estado
+saudável de um erro de carregamento. As consultas leem o histórico já mantido
+pelas system tables, pelo event log e pelas tabelas `observability`, portanto o
+dashboard não altera nenhuma camada Medallion.
 
 Toda a camada operacional foi concentrada em produção. Dev não possui dashboard,
 SQL Warehouse de observabilidade nem notificações. O dashboard produtivo é
@@ -709,12 +727,51 @@ somente quando alguém abre/atualiza o painel. O Warehouse serverless é 2X-Smal
 máximo de um cluster, auto-stop de 10 minutos e o CI o para novamente após cada
 deploy.
 
-A Logic App `logic-healthlake-alerts-prod-brs-01` recebe webhooks de
-falha/duração do workspace produtivo e, no dia 05 às 23:55, consulta diretamente
-o histórico do ADF PROD. Se não existir uma run `Succeeded` de
-`pl_copy_s3_to_adls_raw` para a `odate` do dia 05, envia e-mail sem iniciar o
-pipeline. A identidade gerenciada possui somente as permissões de consulta de
-runs; DEV não possui Logic App, diagnostic setting nem Log Analytics.
+#### Alertas produtivos e Logic App
+
+Os alertas cobrem falha imediata, execução anormalmente longa e ausência da
+ingestão mensal:
+
+| Componente monitorado | Condição | Canais | Comportamento |
+| --- | --- | --- | --- |
+| Job `healthlake_medallion_refresh` | Falha | E-mail Databricks + webhook Logic App | Notifica a falha do orquestrador batch/DQX |
+| Job `healthlake_medallion_refresh` | Duração maior que 7.200 segundos | E-mail Databricks + webhook Logic App | Sinaliza degradação mesmo antes de uma falha terminal |
+| Job `healthlake_vitals_streaming_refresh` | Falha | E-mail Databricks + webhook Logic App | Notifica falha ao processar o backlog streaming |
+| Job `healthlake_vitals_streaming_refresh` | Duração maior que 900 segundos | E-mail Databricks + webhook Logic App | Sinaliza execução streaming acima do tempo esperado |
+| ADF `pl_copy_s3_to_adls_raw` | Nenhuma run `Succeeded` para a `odate` do dia 05 até 23:55 | E-mail Outlook enviado pela Logic App | Avisa que a ingestão mensal S3 → ADLS não foi comprovada; não inicia nem repete o pipeline |
+
+Nos Jobs, notificações de runs puladas e canceladas são suprimidas para reduzir
+ruído; cancelamentos continuam visíveis no dashboard. O Databricks envia os
+e-mails dos Jobs diretamente e também publica o evento na notification
+destination `healthlake-prod-logicapp-alerts`. O trigger HTTP da Logic App
+aceita somente o `workspace_id` produtivo e os eventos `jobs.on_failure` e
+`jobs.on_duration_warning_threshold_exceeded`; eventos aceitos são normalizados
+com ambiente, tipo, Job, run e horário de recebimento. Essa ramificação não
+envia um segundo e-mail, evitando duplicidade com o canal nativo do Databricks.
+
+A mesma Logic App `logic-healthlake-alerts-prod-brs-01` executa, no dia 05 às
+23:55 no fuso de São Paulo, uma verificação independente no histórico do ADF
+PROD. Se não existir uma run `Succeeded` de `pl_copy_s3_to_adls_raw` para a
+`odate` do próprio dia 05, envia o e-mail operacional pela conexão Outlook. A
+identidade gerenciada possui apenas leitura do Data Factory e consulta de runs;
+ela não pode iniciar, cancelar ou alterar pipelines.
+
+Fluxo de tratamento recomendado:
+
+1. Abra a página correspondente do dashboard e identifique Job, estado,
+   duração e `odate` afetada.
+2. Para batch, consulte `dq_run_metrics`, `dq_promotion_control` e a quarentena
+   antes de decidir por uma reexecução da mesma partição.
+3. Para streaming, compare o Job com o update da Pipeline e verifique flow,
+   expectations, volume e backlog observado.
+4. Para o alerta mensal do ADF, valide os cinco arquivos no S3 e a run do
+   pipeline antes de reexecutá-lo manualmente. O monitor nunca faz autorremediação.
+
+DEV não possui Logic App, notification destination, dashboard, SQL Warehouse,
+diagnostic setting nem Log Analytics. A definição, o deploy e os controles de
+segurança da Logic App estão detalhados em
+[`infra/observability`](infra/observability/README.md).
+
 O backlog mostrado é deliberadamente rotulado como observado no último refresh:
 com a Pipeline `IDLE`, o Databricks não conhece eventos que chegaram depois.
 Ainda não há custo financeiro/DBUs no painel, backlog realmente atual do Event
