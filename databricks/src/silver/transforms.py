@@ -1,65 +1,60 @@
-"""Validated current snapshots promoted only after the DQX gate succeeds."""
+"""Promote one DQ-approved ``odate`` into historical Silver Delta tables."""
 
-from pyspark import pipelines as dp
+import argparse
+import sys
+from pathlib import Path
+
+from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 
-from cleaning import clean_table, with_effective_odate
 
+SOURCE_ROOT = Path(sys.argv[0]).resolve().parents[1]
+if str(SOURCE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SOURCE_ROOT))
 
-CATALOG = spark.conf.get("healthlake.catalog")
-PROMOTION_CONTROL = f"{CATALOG}.observability.dq_promotion_control"
-
-
-def approved_snapshot(table_name: str):
-    """Return only the snapshot atomically approved for Bronze-to-Silver."""
-    source = with_effective_odate(
-        spark.read.table(f"{CATALOG}.bronze.{table_name}")
-    ).alias("source")
-    approved = (
-        spark.read.table(PROMOTION_CONTROL)
-        .where(F.col("dq_stage") == "bronze_to_silver")
-        .select(F.col("odate").alias("_approved_odate"))
-        .alias("approved")
-    )
-    return (
-        source.join(
-            F.broadcast(approved),
-            F.col("source.odate") == F.col("approved._approved_odate"),
-            "inner",
-        )
-        .drop("_approved_odate")
-    )
-
-
-@dp.materialized_view(
-    name="patients_current",
-    comment="Latest validated patient snapshot with irreversible PII presentation masks.",
+from common.batch import (  # noqa: E402
+    TABLE_NAMES,
+    parse_iso_date,
+    replace_odate_partition,
+    require_gate_approval,
+    require_nonempty_partition,
 )
-@dp.expect_or_fail("patient_id_present", "patient_id IS NOT NULL")
-def patients_current():
-    return clean_table(approved_snapshot("patients"), "patients")
+from silver.cleaning import clean_table, with_effective_odate  # noqa: E402
 
 
-@dp.materialized_view(name="hospitals_current", comment="Latest validated hospital snapshot.")
-@dp.expect_or_fail("hospital_id_present", "hospital_id IS NOT NULL")
-def hospitals_current():
-    return clean_table(approved_snapshot("hospitals"), "hospitals")
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--catalog", required=True)
+    parser.add_argument("--odate", required=True, type=parse_iso_date)
+    return parser.parse_args()
 
 
-@dp.materialized_view(name="doctors_current", comment="Latest validated doctor snapshot.")
-@dp.expect_or_fail("doctor_id_present", "doctor_id IS NOT NULL")
-def doctors_current():
-    return clean_table(approved_snapshot("doctors"), "doctors")
+def build_silver_partition(spark, catalog: str, table_name: str, odate):
+    """Clean only one pushed-down Bronze partition."""
+    source = with_effective_odate(
+        spark.read.table(f"{catalog}.bronze.{table_name}")
+    ).where(F.col("odate") == F.lit(odate))
+    return clean_table(source, table_name)
 
 
-@dp.materialized_view(name="diseases_current", comment="Latest validated disease snapshot.")
-@dp.expect_or_fail("disease_id_present", "disease_id IS NOT NULL")
-def diseases_current():
-    return clean_table(approved_snapshot("diseases"), "diseases")
+def main():
+    args = parse_args()
+    spark = SparkSession.builder.getOrCreate()
+    require_gate_approval(
+        spark, args.catalog, "bronze_to_silver", args.odate
+    )
+
+    for table_name in TABLE_NAMES:
+        target_table = f"{args.catalog}.silver.{table_name}"
+        partition = require_nonempty_partition(
+            build_silver_partition(
+                spark, args.catalog, table_name, args.odate
+            ),
+            target_table,
+            args.odate,
+        )
+        replace_odate_partition(spark, partition, target_table, args.odate)
 
 
-@dp.materialized_view(name="attendance_current", comment="Latest validated attendance snapshot.")
-@dp.expect_or_fail("attendance_id_present", "attendance_id IS NOT NULL")
-@dp.expect_or_fail("attendance_date_present", "attendance_date IS NOT NULL")
-def attendance_current():
-    return clean_table(approved_snapshot("attendance"), "attendance")
+if __name__ == "__main__":
+    main()

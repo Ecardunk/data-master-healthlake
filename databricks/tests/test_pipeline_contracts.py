@@ -5,6 +5,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BRONZE_INGESTION = REPO_ROOT / "databricks" / "src" / "bronze" / "ingestion.py"
+BATCH_HELPERS = REPO_ROOT / "databricks" / "src" / "common" / "batch.py"
+MEDALLION_JOB = REPO_ROOT / "databricks" / "resources" / "medallion.job.yml"
 PRODUCTION_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "deploy-prod.yml"
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 DEVELOPMENT_SERVICE_PRINCIPAL = "03b5799c-110f-484f-8b1b-e3fd88809c64"
@@ -44,6 +46,15 @@ def test_bronze_odate_regex_matches_the_adf_path_contract():
     assert re.search(pattern, "/patients/not-odate=2026-08-06/patients.csv") is None
 
 
+def test_bronze_uses_stable_explicit_schemas_for_decimal_like_csv_values():
+    schemas = assigned_literal(BRONZE_INGESTION, "RAW_SCHEMAS")
+
+    assert "crm DOUBLE" in schemas["doctors"]
+    assert "capacity DOUBLE" in schemas["hospitals"]
+    assert "severity_score DOUBLE" in schemas["attendance"]
+    assert "cost DECIMAL(12,2)" in schemas["attendance"]
+
+
 def test_medallion_layers_do_not_silently_drop_failed_rows():
     pipeline_sources = [
         BRONZE_INGESTION,
@@ -80,9 +91,49 @@ def test_silver_and_gold_read_only_gate_approved_snapshots():
         REPO_ROOT / "databricks" / "src" / "gold" / "marts.py"
     ).read_text(encoding="utf-8")
 
-    assert 'F.col("dq_stage") == "bronze_to_silver"' in silver_source
-    assert 'F.col("dq_stage") == "silver_to_gold"' in gold_source
-    assert "approved_silver(" in gold_source
+    assert "require_gate_approval(" in silver_source
+    assert '"bronze_to_silver"' in silver_source
+    assert "require_gate_approval(" in gold_source
+    assert '"silver_to_gold"' in gold_source
+
+
+def test_all_batch_layers_process_and_replace_only_the_requested_odate():
+    helpers = BATCH_HELPERS.read_text(encoding="utf-8")
+    bronze = BRONZE_INGESTION.read_text(encoding="utf-8")
+    silver = (
+        REPO_ROOT / "databricks" / "src" / "silver" / "transforms.py"
+    ).read_text(encoding="utf-8")
+    gold = (
+        REPO_ROOT / "databricks" / "src" / "gold" / "marts.py"
+    ).read_text(encoding="utf-8")
+    job = MEDALLION_JOB.read_text(encoding="utf-8")
+
+    assert '.option("replaceWhere", f"odate = DATE' in helpers
+    assert '.partitionBy("odate")' in helpers
+    assert 'odate={odate.isoformat()}' in bronze
+    assert '.where(F.col("odate") == F.lit(odate))' in silver
+    assert '.where(F.col("odate") == F.lit(odate))' in gold
+    assert job.count("- '{{job.parameters.odate}}'") == 3
+    assert "pipeline_task:" not in job
+
+
+def test_entity_table_names_are_the_same_in_every_medallion_layer():
+    names = assigned_literal(BATCH_HELPERS, "TABLE_NAMES")
+    quality_gate = (
+        REPO_ROOT / "databricks" / "src" / "dq" / "quality_gate.py"
+    ).read_text(encoding="utf-8")
+    cleaning = (
+        REPO_ROOT / "databricks" / "src" / "silver" / "cleaning.py"
+    ).read_text(encoding="utf-8")
+
+    assert names == (
+        "patients",
+        "hospitals",
+        "doctors",
+        "diseases",
+        "attendance",
+    )
+    assert 'F.col("odate")' in cleaning
 
 
 def test_cleaning_removes_only_incomplete_non_key_records_before_dq():
@@ -182,14 +233,11 @@ def test_production_deploy_blocks_destructive_bundle_plans():
     assert "--auto-approve" not in workflow
 
 
-def test_all_jobs_and_pipelines_run_as_the_environment_service_principal():
+def test_all_batch_jobs_run_as_the_environment_service_principal():
     bundle_config = (
         REPO_ROOT / "databricks" / "databricks.yml"
     ).read_text(encoding="utf-8")
     resource_sources = [
-        REPO_ROOT / "databricks" / "resources" / "bronze.pipeline.yml",
-        REPO_ROOT / "databricks" / "resources" / "silver.pipeline.yml",
-        REPO_ROOT / "databricks" / "resources" / "gold.pipeline.yml",
         REPO_ROOT / "databricks" / "resources" / "data_quality.jobs.yml",
         REPO_ROOT / "databricks" / "resources" / "medallion.job.yml",
     ]
@@ -201,7 +249,7 @@ def test_all_jobs_and_pipelines_run_as_the_environment_service_principal():
     assert PRODUCTION_SERVICE_PRINCIPAL in bundle_config
     assert resources.count(
         "service_principal_name: ${var.run_as_service_principal_name}"
-    ) == 6
+    ) == 3
     assert "run_as:\n        user_name:" not in resources
 
 

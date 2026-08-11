@@ -1,90 +1,97 @@
-"""Incremental raw-file ingestion for the HealthLake Bronze layer."""
+"""Ingest exactly one raw ``odate`` into historical Bronze Delta tables."""
 
-from pyspark import pipelines as dp
+import argparse
+import sys
+from pathlib import Path
+
+from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 
 
-RAW_ROOT = spark.conf.get("healthlake.raw_root")
+# Serverless Python tasks execute workspace files through ``exec``. Add ``src``
+# explicitly so the same code also works when invoked as a regular Python file.
+SOURCE_ROOT = Path(sys.argv[0]).resolve().parents[1]
+if str(SOURCE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SOURCE_ROOT))
+
+from common.batch import (  # noqa: E402
+    TABLE_NAMES,
+    parse_iso_date,
+    replace_odate_partition,
+    require_nonempty_partition,
+)
+
+
 ODATE_PATH_PATTERN = r"(?:^|/)odate=(\d{4}-\d{2}-\d{2})(?:/|$)"
+RAW_SCHEMAS = {
+    "patients": """
+        patient_id BIGINT, full_name STRING, cpf STRING, email STRING,
+        phone STRING, gender STRING, blood_type STRING, birth_date STRING,
+        city STRING, state STRING, created_at STRING, _corrupt_record STRING
+    """,
+    "hospitals": """
+        hospital_id BIGINT, hospital_name STRING, hospital_type STRING,
+        state STRING, city STRING, capacity DOUBLE, created_at STRING,
+        _corrupt_record STRING
+    """,
+    "doctors": """
+        doctor_id BIGINT, doctor_name STRING, crm DOUBLE, specialty STRING,
+        hospital_id BIGINT, created_at STRING, _corrupt_record STRING
+    """,
+    "diseases": """
+        disease_id BIGINT, disease_name STRING, category STRING,
+        severity_level DOUBLE, created_at STRING, _corrupt_record STRING
+    """,
+    "attendance": """
+        attendance_id BIGINT, patient_id BIGINT, doctor_id BIGINT,
+        hospital_id BIGINT, disease_id BIGINT, attendance_date STRING,
+        wait_time_minutes DOUBLE, cost DECIMAL(12,2), severity_score DOUBLE,
+        discharge_flag DOUBLE, created_at STRING, _corrupt_record STRING
+    """,
+}
 
 
-def read_raw_csv(dataset_name: str):
-    """Read each ADF-delivered CSV only once and preserve its lineage."""
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--catalog", required=True)
+    parser.add_argument("--raw-root", required=True)
+    parser.add_argument("--odate", required=True, type=parse_iso_date)
+    return parser.parse_args()
+
+
+def read_raw_csv(spark, raw_root: str, dataset_name: str, odate):
+    """Read only the requested landing partition using a stable raw schema."""
+    partition_path = (
+        f"{raw_root.rstrip('/')}/{dataset_name}/odate={odate.isoformat()}"
+    )
     return (
-        spark.readStream.format("cloudFiles")
-        .option("cloudFiles.format", "csv")
-        .option("cloudFiles.inferColumnTypes", "true")
-        .option("cloudFiles.schemaEvolutionMode", "rescue")
-        .option("cloudFiles.rescuedDataColumn", "_rescued_data")
+        spark.read.format("csv")
+        .schema(RAW_SCHEMAS[dataset_name])
         .option("header", "true")
         .option("encoding", "UTF-8")
-        .load(f"{RAW_ROOT}/{dataset_name}")
-        .withColumn("_source_file", F.col("_metadata.file_path"))
+        .option("mode", "PERMISSIVE")
+        .option("columnNameOfCorruptRecord", "_corrupt_record")
+        .option("pathGlobFilter", "*.csv")
+        .load(partition_path)
+        .withColumn("_source_file", F.input_file_name())
         .withColumn("_ingested_at", F.current_timestamp())
-        .withColumn(
-            "odate",
-            F.to_date(
-                F.regexp_extract(
-                    F.col("_metadata.file_path"),
-                    ODATE_PATH_PATTERN,
-                    1,
-                ),
-                "yyyy-MM-dd",
-            ),
-        )
+        .withColumn("odate", F.lit(odate).cast("date"))
     )
 
 
-@dp.table(
-    name="patients",
-    comment="Source-aligned patient snapshots incrementally ingested from ADLS raw.",
-    table_properties={"quality": "bronze"},
-)
-@dp.expect_or_fail("odate_present", "odate IS NOT NULL")
-@dp.expect("patient_id_present", "patient_id IS NOT NULL")
-def patients():
-    return read_raw_csv("patients")
+def main():
+    args = parse_args()
+    spark = SparkSession.builder.getOrCreate()
+
+    for table_name in TABLE_NAMES:
+        target_table = f"{args.catalog}.bronze.{table_name}"
+        partition = require_nonempty_partition(
+            read_raw_csv(spark, args.raw_root, table_name, args.odate),
+            target_table,
+            args.odate,
+        )
+        replace_odate_partition(spark, partition, target_table, args.odate)
 
 
-@dp.table(
-    name="hospitals",
-    comment="Source-aligned hospital snapshots incrementally ingested from ADLS raw.",
-    table_properties={"quality": "bronze"},
-)
-@dp.expect_or_fail("odate_present", "odate IS NOT NULL")
-@dp.expect("hospital_id_present", "hospital_id IS NOT NULL")
-def hospitals():
-    return read_raw_csv("hospitals")
-
-
-@dp.table(
-    name="doctors",
-    comment="Source-aligned doctor snapshots incrementally ingested from ADLS raw.",
-    table_properties={"quality": "bronze"},
-)
-@dp.expect_or_fail("odate_present", "odate IS NOT NULL")
-@dp.expect("doctor_id_present", "doctor_id IS NOT NULL")
-def doctors():
-    return read_raw_csv("doctors")
-
-
-@dp.table(
-    name="diseases",
-    comment="Source-aligned disease snapshots incrementally ingested from ADLS raw.",
-    table_properties={"quality": "bronze"},
-)
-@dp.expect_or_fail("odate_present", "odate IS NOT NULL")
-@dp.expect("disease_id_present", "disease_id IS NOT NULL")
-def diseases():
-    return read_raw_csv("diseases")
-
-
-@dp.table(
-    name="attendance",
-    comment="Source-aligned attendance snapshots incrementally ingested from ADLS raw.",
-    table_properties={"quality": "bronze"},
-)
-@dp.expect_or_fail("odate_present", "odate IS NOT NULL")
-@dp.expect("attendance_id_present", "attendance_id IS NOT NULL")
-def attendance():
-    return read_raw_csv("attendance")
+if __name__ == "__main__":
+    main()
