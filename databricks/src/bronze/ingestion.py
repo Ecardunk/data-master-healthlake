@@ -25,28 +25,28 @@ from common.batch import (  # noqa: E402
 ODATE_PATH_PATTERN = r"(?:^|/)odate=(\d{4}-\d{2}-\d{2})(?:/|$)"
 RAW_SCHEMAS = {
     "patients": """
-        patient_id BIGINT, full_name STRING, cpf STRING, email STRING,
+        patient_id STRING, full_name STRING, cpf STRING, email STRING,
         phone STRING, gender STRING, blood_type STRING, birth_date STRING,
         city STRING, state STRING, created_at STRING, _corrupt_record STRING
     """,
     "hospitals": """
-        hospital_id BIGINT, hospital_name STRING, hospital_type STRING,
-        state STRING, city STRING, capacity DOUBLE, created_at STRING,
+        hospital_id STRING, hospital_name STRING, hospital_type STRING,
+        state STRING, city STRING, capacity STRING, created_at STRING,
         _corrupt_record STRING
     """,
     "doctors": """
-        doctor_id BIGINT, doctor_name STRING, crm DOUBLE, specialty STRING,
-        hospital_id BIGINT, created_at STRING, _corrupt_record STRING
+        doctor_id STRING, doctor_name STRING, crm STRING, specialty STRING,
+        hospital_id STRING, created_at STRING, _corrupt_record STRING
     """,
     "diseases": """
-        disease_id BIGINT, disease_name STRING, category STRING,
-        severity_level DOUBLE, created_at STRING, _corrupt_record STRING
+        disease_id STRING, disease_name STRING, category STRING,
+        severity_level STRING, created_at STRING, _corrupt_record STRING
     """,
     "attendance": """
-        attendance_id BIGINT, patient_id BIGINT, doctor_id BIGINT,
-        hospital_id BIGINT, disease_id BIGINT, attendance_date STRING,
-        wait_time_minutes DOUBLE, cost DECIMAL(12,2), severity_score DOUBLE,
-        discharge_flag DOUBLE, created_at STRING, _corrupt_record STRING
+        attendance_id STRING, patient_id STRING, doctor_id STRING,
+        hospital_id STRING, disease_id STRING, attendance_date STRING,
+        wait_time_minutes STRING, cost STRING, severity_score STRING,
+        discharge_flag STRING, created_at STRING, _corrupt_record STRING
     """,
 }
 

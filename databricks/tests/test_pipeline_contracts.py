@@ -46,13 +46,20 @@ def test_bronze_odate_regex_matches_the_adf_path_contract():
     assert re.search(pattern, "/patients/not-odate=2026-08-06/patients.csv") is None
 
 
-def test_bronze_uses_stable_explicit_schemas_for_decimal_like_csv_values():
+def test_bronze_preserves_source_values_as_text_before_silver_casts():
     schemas = assigned_literal(BRONZE_INGESTION, "RAW_SCHEMAS")
 
-    assert "crm DOUBLE" in schemas["doctors"]
-    assert "capacity DOUBLE" in schemas["hospitals"]
-    assert "severity_score DOUBLE" in schemas["attendance"]
-    assert "cost DECIMAL(12,2)" in schemas["attendance"]
+    assert "crm STRING" in schemas["doctors"]
+    assert "hospital_id STRING" in schemas["doctors"]
+    assert "capacity STRING" in schemas["hospitals"]
+    assert "severity_score STRING" in schemas["attendance"]
+    assert "cost STRING" in schemas["attendance"]
+
+    cleaning = (
+        REPO_ROOT / "databricks" / "src" / "silver" / "cleaning.py"
+    ).read_text(encoding="utf-8")
+    assert "try_cast(" in cleaning
+    assert "try_integral(" in cleaning
 
 
 def test_bronze_uses_unity_catalog_compatible_file_metadata():
