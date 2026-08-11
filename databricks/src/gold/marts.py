@@ -1,74 +1,60 @@
-"""Analytics-ready HealthLake Gold dimensions, fact table, and daily KPI."""
+"""Publish one DQ-approved ``odate`` into historical Gold Delta tables."""
 
-from pyspark import pipelines as dp
+import argparse
+import sys
+from pathlib import Path
+
+from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 
 
-CATALOG = spark.conf.get("healthlake.catalog")
-SILVER = f"{CATALOG}.silver"
-PROMOTION_CONTROL = f"{CATALOG}.observability.dq_promotion_control"
+SOURCE_ROOT = Path(sys.argv[0]).resolve().parents[1]
+if str(SOURCE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SOURCE_ROOT))
 
-
-def approved_silver(table_name: str):
-    """Read only the snapshot approved by the complete Silver-to-Gold gate."""
-    source = spark.read.table(f"{SILVER}.{table_name}").alias("source")
-    approved = (
-        spark.read.table(PROMOTION_CONTROL)
-        .where(F.col("dq_stage") == "silver_to_gold")
-        .select(F.col("odate").alias("_approved_odate"))
-        .alias("approved")
-    )
-    return (
-        source.join(
-            F.broadcast(approved),
-            F.col("source.snapshot_date") == F.col("approved._approved_odate"),
-            "inner",
-        )
-        .drop("_approved_odate")
-    )
-
-
-@dp.materialized_view(
-    name="dim_patient",
-    comment="PII-minimized patient dimension; direct identifiers are intentionally excluded.",
+from common.batch import (  # noqa: E402
+    TABLE_NAMES,
+    parse_iso_date,
+    replace_odate_partition,
+    require_gate_approval,
+    require_nonempty_partition,
 )
-def dim_patient():
-    return approved_silver("patients_current").select(
-        "patient_id", "gender", "blood_type", "birth_date", "city", "state", "snapshot_date"
-    )
 
 
-@dp.materialized_view(name="dim_hospital", comment="Conformed hospital dimension.")
-def dim_hospital():
-    return approved_silver("hospitals_current").select(
+GOLD_COLUMNS = {
+    "patients": (
+        "patient_id",
+        "gender",
+        "blood_type",
+        "birth_date",
+        "city",
+        "state",
+        "odate",
+    ),
+    "hospitals": (
         "hospital_id",
         "hospital_name",
         "hospital_type",
         "state",
         "city",
         "capacity",
-        "snapshot_date",
-    )
-
-
-@dp.materialized_view(name="dim_doctor", comment="Conformed doctor dimension.")
-def dim_doctor():
-    return approved_silver("doctors_current").select(
-        "doctor_id", "doctor_name", "specialty", "hospital_id", "snapshot_date"
-    )
-
-
-@dp.materialized_view(name="dim_disease", comment="Conformed disease dimension.")
-def dim_disease():
-    return approved_silver("diseases_current").select(
-        "disease_id", "disease_name", "category", "severity_level", "snapshot_date"
-    )
-
-
-@dp.materialized_view(name="fact_attendance", comment="PII-minimized attendance fact table.")
-@dp.expect_or_fail("attendance_date_present", "attendance_date IS NOT NULL")
-def fact_attendance():
-    return approved_silver("attendance_current").select(
+        "odate",
+    ),
+    "doctors": (
+        "doctor_id",
+        "doctor_name",
+        "specialty",
+        "hospital_id",
+        "odate",
+    ),
+    "diseases": (
+        "disease_id",
+        "disease_name",
+        "category",
+        "severity_level",
+        "odate",
+    ),
+    "attendance": (
         "attendance_id",
         "patient_id",
         "doctor_id",
@@ -80,22 +66,40 @@ def fact_attendance():
         "cost",
         "severity_score",
         "is_discharged",
-        "snapshot_date",
+        "odate",
+    ),
+}
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--catalog", required=True)
+    parser.add_argument("--odate", required=True, type=parse_iso_date)
+    return parser.parse_args()
+
+
+def build_gold_partition(spark, catalog: str, table_name: str, odate):
+    """Project the analytics contract from exactly one Silver partition."""
+    return (
+        spark.read.table(f"{catalog}.silver.{table_name}")
+        .where(F.col("odate") == F.lit(odate))
+        .select(*GOLD_COLUMNS[table_name])
     )
 
 
-@dp.materialized_view(
-    name="kpi_hospital_daily",
-    comment="Daily volume, wait-time, cost, and discharge metrics by hospital.",
-)
-def kpi_hospital_daily():
-    # These two names are datasets declared in this same pipeline. Resolving
-    # them locally lets the pipeline build their lineage before the aggregate.
-    attendance = spark.read.table("fact_attendance")
-    hospitals = spark.read.table("dim_hospital")
+def build_daily_kpi(spark, catalog: str, odate):
+    """Aggregate one partition and join the matching hospital snapshot."""
+    attendance = (
+        spark.read.table(f"{catalog}.gold.attendance")
+        .where(F.col("odate") == F.lit(odate))
+    )
+    hospitals = (
+        spark.read.table(f"{catalog}.gold.hospitals")
+        .where(F.col("odate") == F.lit(odate))
+    )
 
     return (
-        attendance.groupBy("hospital_id", "attendance_date")
+        attendance.groupBy("odate", "hospital_id", "attendance_date")
         .agg(
             F.count("attendance_id").alias("attendance_count"),
             F.avg("wait_time_minutes").alias("avg_wait_time_minutes"),
@@ -103,11 +107,19 @@ def kpi_hospital_daily():
             F.avg(F.col("is_discharged").cast("double")).alias("discharge_rate"),
         )
         .join(
-            hospitals.select("hospital_id", "hospital_name", "hospital_type", "state", "city"),
-            on="hospital_id",
+            hospitals.select(
+                "odate",
+                "hospital_id",
+                "hospital_name",
+                "hospital_type",
+                "state",
+                "city",
+            ),
+            on=["odate", "hospital_id"],
             how="left",
         )
         .select(
+            "odate",
             "attendance_date",
             "hospital_id",
             "hospital_name",
@@ -120,3 +132,36 @@ def kpi_hospital_daily():
             F.round("discharge_rate", 4).alias("discharge_rate"),
         )
     )
+
+
+def main():
+    args = parse_args()
+    spark = SparkSession.builder.getOrCreate()
+    require_gate_approval(
+        spark, args.catalog, "silver_to_gold", args.odate
+    )
+
+    for table_name in TABLE_NAMES:
+        target_table = f"{args.catalog}.gold.{table_name}"
+        partition = require_nonempty_partition(
+            build_gold_partition(
+                spark, args.catalog, table_name, args.odate
+            ),
+            target_table,
+            args.odate,
+        )
+        replace_odate_partition(spark, partition, target_table, args.odate)
+
+    kpi_table = f"{args.catalog}.gold.kpi_hospital_daily"
+    kpi_partition = require_nonempty_partition(
+        build_daily_kpi(spark, args.catalog, args.odate),
+        kpi_table,
+        args.odate,
+    )
+    replace_odate_partition(
+        spark, kpi_partition, kpi_table, args.odate
+    )
+
+
+if __name__ == "__main__":
+    main()

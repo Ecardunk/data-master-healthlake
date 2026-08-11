@@ -25,8 +25,8 @@ permissões sobre jobs/pipelines são controles separados dos grants do Unity
 Catalog e devem seguir o mesmo princípio de menor privilégio. Escrita, deploy e
 execução pertencem a service principals dedicados, nunca aos grupos humanos.
 
-O `run_as` dos três Jobs e das três Pipelines batch, mais o Job e a Pipeline
-streaming exclusivos de produção, é declarado no Bundle e não depende de quem
+O `run_as` dos três Jobs batch, mais o Job e a Pipeline streaming exclusivos
+de produção, é declarado no Bundle e não depende de quem
 executou o deploy: dev usa `sp-healthlake-dev-pipeline`
 (`03b5799c-110f-484f-8b1b-e3fd88809c64`) e prod usa
 `sp-healthlake-prod-pipeline` (`bfeb3006-1824-4361-bacb-3697f6e33262`). O CI/CD
@@ -38,37 +38,40 @@ Os grupos começam vazios de propósito: a associação de pessoas deve ser feit
 no IdP/SCIM de acordo com a função de cada colaborador, sem conceder privilégios
 diretamente a usuários.
 
-Este diretório é o deployável do Databricks para o case. Ele usa **Lakeflow
-Pipelines**, o nome atual do Delta Live Tables (DLT), e **Declarative
+Este diretório é o deployável do Databricks para o case. O batch usa
+**Lakeflow Jobs** com tabelas Delta gerenciadas; a trilha de sinais vitais usa
+**Lakeflow Pipelines**. Todos os recursos são versionados com **Declarative
 Automation Bundles**, o nome atual do Databricks Asset Bundles (DAB).
 
 ## O que cada recurso faz
 
-- `healthlake_bronze`: usa Auto Loader para ler incrementalmente os CSVs
-  entregues pelo ADF em `raw/<dataset>/odate=YYYY-MM-DD/`. Mantém a fonte e
-  acrescenta metadados de linhagem. O regex de partição extrai a data do
-  segmento completo do path, e `expect_or_fail` interrompe a atualização se
-  `odate` não puder ser determinada.
-- `healthlake_silver`: publica somente a `odate` aprovada pelo gate
+- A tarefa Bronze lê exclusivamente
+  `raw/<dataset>/odate=<parâmetro>/`, com schema raw explícito, e grava a mesma
+  `odate` em tabelas Delta históricas. `_source_file` e `_ingested_at` mantêm a
+  linhagem.
+- A tarefa Silver lê exclusivamente a partição Bronze aprovada pelo gate
   Bronze→Silver. As transformações compartilhadas com o gate deduplicam o
   snapshot, convertem tipos, normalizam textos e mascaram irreversivelmente os
-  identificadores diretos do paciente. Expectations `expect_or_fail` impedem
-  que uma tabela inteira seja atualizada se o contrato final for violado.
-- `healthlake_gold`: publica dimensões, o fato de atendimentos e o KPI diário
-  por hospital. CPF, e-mail, telefone e nome do paciente não chegam à Gold.
+  identificadores diretos do paciente.
+- A tarefa Gold lê exclusivamente a partição Silver aprovada pelo segundo gate,
+  remove os identificadores diretos e publica também o KPI diário por hospital.
+  O join do KPI usa `odate` e `hospital_id`, evitando cruzar snapshots.
+- As três camadas usam os mesmos nomes `patients`, `hospitals`, `doctors`,
+  `diseases` e `attendance`, e todas são particionadas fisicamente por `odate`.
+  Gold possui ainda `kpi_hospital_daily`, também particionada por `odate`.
 - `healthlake_bronze_to_silver_dq` e `healthlake_silver_to_gold_dq`: quality
   gates intermediários com DQX. Cada gate recebe uma `odate`, filtra somente
   essa partição, registra `odate`, `input_rows`, `checked_rows` e
   `removed_by_cleaning` no `violation_summary` das métricas, envia linhas
-  reprovadas para tabelas `<catalog>.quarantine.*_v2` e falha o Job para
+  reprovadas para tabelas `<catalog>.quarantine.<stage>_<table>` e falha o Job para
   bloquear a promoção. Em produção, a falha do orquestrador gera e-mail e
-  webhook para a Logic App; dev não possui alertas. O sufixo separa o schema tipado
-  pós-limpeza das quarentenas raw legadas. No gate Bronze→Silver, limpeza,
+  webhook para a Logic App; dev não possui alertas. Cada estágio usa uma tabela
+  de quarentena própria para isolar os contratos raw e tipado. No gate Bronze→Silver, limpeza,
   tipagem e deduplicação acontecem antes das regras. A dependência DQX está
   fixada em `0.15.0`.
 - `healthlake_medallion_refresh`: job que respeita a dependência Bronze →
   DQ Bronze→Silver → Silver → DQ Silver→Gold → Gold e propaga a
-  mesma `odate` aos dois gates.
+  mesma `odate` às cinco tarefas.
 - `healthlake_vitals_streaming` (somente prod): consome o único Event Hub pelo
   endpoint Kafka com OAuth e a service credential
   `svc_healthlake_prod_eventhubs_receiver`. Preserva payload e coordenadas na
@@ -110,9 +113,10 @@ databricks bundle run healthlake_medallion_refresh `
 ```
 
 O último comando deve ser executado apenas após o ADF concluir com sucesso a
-cópia dos cinco arquivos de uma mesma `odate`. Na primeira execução, o Auto
-Loader cria seu estado de processamento e carrega todos os arquivos existentes
-no landing path; nas execuções seguintes, carrega apenas arquivos novos.
+cópia dos cinco arquivos de uma mesma `odate`. Nenhuma tarefa procura outras
+datas no landing ou nas tabelas de origem. A escrita Delta usa `replaceWhere`
+com a condição exata da partição; portanto, reexecutar a mesma data corrige
+somente essa data e não duplica nem reprocessa o histórico.
 O default do parâmetro de Job é vazio e não usa o relógio como fallback;
 `--params "odate=YYYY-MM-DD"` é obrigatório para uma execução válida.
 
@@ -123,10 +127,12 @@ solicitada ou se qualquer linha, depois da limpeza, violar uma regra crítica.
 A limpeza remove registros incompletos em campos não-chave antes do DQ; qualquer
 violação que permaneça bloqueia o salvamento da tabela inteira. O split válido
 não é gravado diretamente. Somente depois que as cinco tabelas passam, o Job
-atualiza `observability.dq_promotion_control`; a Silver lê exclusivamente essa
-partição aprovada. Assim, uma falha não promove parcialmente uma tabela ou um
-subconjunto de entidades. A mesma estratégia bloqueia a Gold no segundo gate,
-e expectations `expect_or_fail` protegem as materializações Silver/Gold.
+registra a combinação (`dq_stage`, `odate`) em
+`observability.dq_promotion_control`; a tarefa seguinte exige exatamente essa
+aprovação. A mesma estratégia bloqueia a Gold no segundo gate. Cada escrita
+de tabela substitui atomicamente uma única partição; se houver uma falha de
+infraestrutura entre tabelas, o downstream não executa e a reexecução
+idempotente conclui a mesma `odate`.
 
 As métricas ficam em `observability.dq_run_metrics`: `input_rows` representa as
 linhas Bronze/Silver filtradas pela data e `checked_rows` representa o conjunto

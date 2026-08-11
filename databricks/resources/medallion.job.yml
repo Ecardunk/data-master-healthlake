@@ -4,7 +4,7 @@ resources:
       name: healthlake-medallion-refresh-${bundle.target}
       run_as:
         service_principal_name: ${var.run_as_service_principal_name}
-      description: Refreshes the HealthLake Bronze, Silver, and Gold pipelines in dependency order.
+      description: Processes exactly one odate through historical Bronze, Silver, and Gold Delta tables.
       max_concurrent_runs: 1
       timeout_seconds: 10800
       queue:
@@ -14,9 +14,17 @@ resources:
           default: ''
       tasks:
         - task_key: refresh_bronze
-          description: Incrementally ingest new ADLS raw CSV files into Bronze.
-          pipeline_task:
-            pipeline_id: ${resources.pipelines.healthlake_bronze.id}
+          description: Replace only the requested raw odate in the historical Bronze tables.
+          spark_python_task:
+            python_file: ../src/bronze/ingestion.py
+            parameters:
+              - --catalog
+              - ${var.catalog}
+              - --raw-root
+              - ${var.raw_root}
+              - --odate
+              - '{{job.parameters.odate}}'
+          environment_key: batch_serverless
         - task_key: dq_bronze_to_silver
           description: Stop the flow and quarantine Bronze records rejected by DQX before Silver.
           depends_on:
@@ -26,11 +34,17 @@ resources:
             job_parameters:
               odate: '{{job.parameters.odate}}'
         - task_key: refresh_silver
-          description: Build masked and typed current snapshots only after the Bronze DQX gate succeeds.
+          description: Replace only the approved odate in the historical Silver tables.
           depends_on:
             - task_key: dq_bronze_to_silver
-          pipeline_task:
-            pipeline_id: ${resources.pipelines.healthlake_silver.id}
+          spark_python_task:
+            python_file: ../src/silver/transforms.py
+            parameters:
+              - --catalog
+              - ${var.catalog}
+              - --odate
+              - '{{job.parameters.odate}}'
+          environment_key: batch_serverless
         - task_key: dq_silver_to_gold
           description: Stop the flow and quarantine Silver records rejected by DQX before Gold.
           depends_on:
@@ -40,8 +54,18 @@ resources:
             job_parameters:
               odate: '{{job.parameters.odate}}'
         - task_key: refresh_gold
-          description: Publish analytics marts only after the Silver DQX gate succeeds.
+          description: Replace only the approved odate in the historical Gold tables and KPI.
           depends_on:
             - task_key: dq_silver_to_gold
-          pipeline_task:
-            pipeline_id: ${resources.pipelines.healthlake_gold.id}
+          spark_python_task:
+            python_file: ../src/gold/marts.py
+            parameters:
+              - --catalog
+              - ${var.catalog}
+              - --odate
+              - '{{job.parameters.odate}}'
+          environment_key: batch_serverless
+      environments:
+        - environment_key: batch_serverless
+          spec:
+            environment_version: '2'

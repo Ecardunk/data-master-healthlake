@@ -56,9 +56,9 @@ A tabela `kpi_hospital_daily` permite responder, por hospital e dia:
 
 <img width="1536" height="1024" alt="arquitetura tecnica" src="https://github.com/user-attachments/assets/fa050e62-c80a-4f6d-9a29-c7b67a1a5ecd" />
 
-A arquitetura técnica apresenta uma plataforma Lakehouse híbrida, com processamento batch e streaming, centralizada no Azure Databricks e estruturada segundo a arquitetura Medallion. No fluxo batch, snapshots sintéticos armazenados no Amazon S3 são transportados pelo Azure Data Factory para o ADLS Gen2 e processados pelas camadas Raw, Bronze, Silver e Gold. Já no fluxo streaming, eventos gerados por um Producer em Python são publicados no Azure Event Hubs e consumidos continuamente pelo Databricks. Em ambos os casos, o processamento utiliza Lakeflow Pipelines, Spark Declarative Pipelines e Delta Lake, permitindo processamento distribuído, transações ACID, evolução de schema e reprocessamento controlado.
+A arquitetura técnica apresenta uma plataforma Lakehouse híbrida, com processamento batch e streaming, centralizada no Azure Databricks e estruturada segundo a arquitetura Medallion. No fluxo batch, snapshots sintéticos armazenados no Amazon S3 são transportados pelo Azure Data Factory para o ADLS Gen2 e processados pelas camadas Raw, Bronze, Silver e Gold por tarefas Python serverless orquestradas pelo Lakeflow Jobs. Já no fluxo streaming, eventos gerados por um Producer em Python são publicados no Azure Event Hubs e consumidos por uma Lakeflow Declarative Pipeline. As tabelas usam Delta Lake para oferecer transações ACID, enforcement de schema e reprocessamento controlado.
 
-Entre as camadas são aplicadas regras de Data Quality, como completude, unicidade, consistência, tipos e regras de negócio, com possibilidade de direcionamento de registros inválidos para quarentena. A camada Silver concentra limpeza, deduplicação, normalização e minimização de PII, enquanto a Gold organiza os dados em Star Schema, com fatos, dimensões, agregações e KPIs destinados ao consumo analítico. A solução ainda incorpora mecanismos transversais de governança e segurança com Unity Catalog e Azure Key Vault, observabilidade com Databricks Dashboards e Logic Apps, checkpoints e mecanismos de recuperação no streaming, além de automação e versionamento dos recursos Databricks por meio de Declarative Automation Bundles e CI/CD.
+Entre as camadas são aplicadas regras de Data Quality, como completude, unicidade, consistência, tipos e regras de negócio, com direcionamento de registros inválidos para quarentena. A camada Silver concentra limpeza, deduplicação, normalização e minimização de PII, enquanto a Gold publica as mesmas entidades em um contrato analítico minimizado e acrescenta o KPI diário por hospital. A solução ainda incorpora mecanismos transversais de governança e segurança com Unity Catalog e Azure Key Vault, observabilidade com Databricks Dashboards e Logic Apps, checkpoints e mecanismos de recuperação no streaming, além de automação e versionamento dos recursos Databricks por meio de Declarative Automation Bundles e CI/CD.
 
 
 ### 2.3 Fluxo técnico end-to-end
@@ -68,11 +68,11 @@ Entre as camadas são aplicadas regras de Data Quality, como completude, unicida
 | 1. Geração | Configuração e `id_control.json` | Faker/pandas criam registros, aplicam churn, nulos e duplicatas | CSV em `output/raw/odate=...` |
 | 2. Landing AWS | Partição CSV local | `boto3.upload_file` envia os cinco datasets | `s3://<bucket>/raw/<dataset>/odate=<data>/<dataset>.csv` |
 | 3. ADF | Parâmetros `odate`, bucket e datasets | `ForEach` paralelo verifica `exists`; `Copy` preserva hierarquia | `abfss://raw@<storage>/<dataset>/odate=<data>/<dataset>.csv` |
-| 4. Bronze | CSVs no ADLS | Auto Loader faz leitura incremental e adiciona metadados | Cinco tabelas Delta Bronze |
-| 5. Gate 1 | Uma `odate` das tabelas Bronze | Filtra a partição, limpa/deduplica/tipa e então aplica DQX | Métricas, quarentena `_v2`, aprovação conjunta das cinco tabelas ou bloqueio total |
-| 6. Silver | Bronze aprovada | Snapshot atual, deduplicação, tipagem, padronização e máscaras | Cinco materialized views Silver |
-| 7. Gate 2 | Uma `odate` das views Silver | Revalidação tipada antes do produto analítico | Métricas, quarentena `_v2`, aprovação conjunta ou bloqueio total |
-| 8. Gold | Silver aprovada | Modelagem dimensional e agregação diária | Quatro dimensões, um fato e um KPI |
+| 4. Bronze | CSVs no ADLS | Lê somente o path da `odate`, aplica schema explícito e metadados | Cinco tabelas Delta históricas particionadas por `odate` |
+| 5. Gate 1 | Uma `odate` das tabelas Bronze | Filtra a partição, limpa/deduplica/tipa e então aplica DQX | Métricas, quarentena por estágio/tabela e aprovação conjunta ou bloqueio total |
+| 6. Silver | Partição Bronze aprovada | Deduplicação, tipagem, padronização e máscaras | Cinco tabelas Delta históricas com os mesmos nomes da Bronze |
+| 7. Gate 2 | Uma `odate` das tabelas Silver | Revalidação tipada antes do produto analítico | Métricas, quarentena por estágio/tabela e aprovação conjunta ou bloqueio total |
+| 8. Gold | Partição Silver aprovada | Minimização e agregação diária | Cinco tabelas Delta com os mesmos nomes e um KPI |
 | 9. Consumo | Gold e métricas DQ | SQL Warehouse e dashboard AI/BI | Consultas analíticas e painel operacional |
 | S1. Eventos | Contrato JSON v1 | Producer OAuth publica por `patient_id` | Um Event Hub, dois partitions, IDs UUID para deduplicação |
 | S2. Bronze streaming | Kafka Event Hubs | Lakeflow preserva payload, hash, partition e offset | `bronze.vital_events_raw` append-only |
@@ -178,7 +178,7 @@ Configuração versionada de novos registros por execução:
 | Doenças | 0 |
 | Atendimentos | 2.500 |
 
-A CLI aceita `--profile clean|chaos`. Use `clean` para uma execução destinada à Gold e uma `odate` separada com `chaos` para demonstrar o bloqueio. A seed configura os geradores pseudoaleatórios (PRNGs) de `random`, NumPy e Faker. Isso melhora a repetibilidade, mas não garante sozinho uma reprodução byte a byte: o resultado também depende da versão das bibliotecas, do relógio usado por `end_date="now"`, do estado de IDs e dos snapshots anteriores. A própria documentação do Faker restringe a garantia à mesma versão. A opção `--overwrite` substitui arquivos da partição, mas também gera novos dados e avança novamente os IDs; ela não funciona como replay idempotente. Como o mesmo caminho é reutilizado e o Auto Loader não habilita `cloudFiles.allowOverwrites`, essa sobrescrita normalmente também não atualiza a Bronze depois que o arquivo já foi descoberto.
+A CLI aceita `--profile clean|chaos`. Use `clean` para uma execução destinada à Gold e uma `odate` separada com `chaos` para demonstrar o bloqueio. A seed configura os geradores pseudoaleatórios (PRNGs) de `random`, NumPy e Faker. Isso melhora a repetibilidade, mas não garante sozinho uma reprodução byte a byte: o resultado também depende da versão das bibliotecas, do relógio usado por `end_date="now"`, do estado de IDs e dos snapshots anteriores. A própria documentação do Faker restringe a garantia à mesma versão. A opção `--overwrite` substitui os arquivos da partição, mas também gera novos dados e avança novamente os IDs; ela não funciona como replay byte a byte. Depois que os arquivos forem recopiados para a Raw, reexecutar o Job com a mesma `odate` substituirá somente essa partição nas três camadas.
 
 No modo de eventos, o gerador cria um contrato v1 por linha com UUID imutável,
 timestamps UTC e unidades explícitas, gravando um JSONL novo por
@@ -270,16 +270,15 @@ Essa zona permite auditoria e reprocessamento somente enquanto os objetos origin
 
 ### 3.6 Camada Bronze
 
-[`ingestion.py`](databricks/src/bronze/ingestion.py) usa `spark.readStream.format("cloudFiles")` para ler incrementalmente os cinco diretórios. A configuração:
+[`ingestion.py`](databricks/src/bronze/ingestion.py) recebe `odate` obrigatória e lê somente `raw/<dataset>/odate=<parâmetro>/` para cada uma das cinco entidades. A configuração:
 
 - interpreta CSV com cabeçalho UTF-8;
-- infere tipos;
-- usa `schemaEvolutionMode = rescue`;
-- envia incompatibilidades para `_rescued_data`;
+- usa schemas raw explícitos e estáveis, incluindo números decimais originados pelo CSV;
+- preserva linhas CSV malformadas em `_corrupt_record` para avaliação pelo gate;
 - registra `_source_file` e `_ingested_at`;
-- extrai `odate` do segmento completo `odate=YYYY-MM-DD` com regex validado;
-- usa `expect_or_fail` para interromper a atualização inteira quando o path não fornece uma `odate` válida;
-- monitora chaves ausentes com expectations sem descartar silenciosamente a linha antes da limpeza e do DQ.
+- adiciona a `odate` validada pelo argumento do Job;
+- falha se qualquer entidade não tiver linhas para a data solicitada;
+- grava tabelas Delta gerenciadas particionadas fisicamente por `odate`.
 
 | Tabela Bronze | Origem Raw | Chave monitorada |
 | --- | --- | --- |
@@ -289,11 +288,11 @@ Essa zona permite auditoria e reprocessamento somente enquanto os objetos origin
 | `bronze.diseases` | `raw/diseases` | `disease_id` |
 | `bronze.attendance` | `raw/attendance` | `attendance_id` |
 
-O Auto Loader mantém estado de ingestão e evita reler arquivos já processados dentro do checkpoint gerenciado pelo Lakeflow. A Bronze é histórica e recebe snapshots completos de várias datas. Como `cloudFiles.allowOverwrites` não está configurado, o desenho seguro é publicar um caminho imutável por execução; replay no mesmo path exige política explícita de overwrite, deduplicação e reconciliação.
+A Bronze é histórica e acumula snapshots completos de várias datas. A escrita usa `replaceWhere` limitado à `odate` recebida: a primeira execução cria a tabela particionada e uma reexecução substitui atomicamente somente a partição correspondente, sem duplicar ou recalcular outras datas.
 
 ### 3.7 Gate de qualidade Bronze -> Silver
 
-O Job DQX recebe uma `odate` explícita, filtra somente essa partição em cada tabela Bronze e falha se qualquer uma das cinco entidades não tiver linhas. Antes de aplicar regras, ele usa as mesmas transformações puras da Silver para deduplicar, tipar, normalizar e mascarar os dados. Essa limpeza também remove registros incompletos em campos não-chave antes do DQ; a reconciliação fica registrada como `removed_by_cleaning = input_rows - checked_rows` dentro de `violation_summary`. Só então o DQX divide linhas válidas e inválidas, mascara PII de pacientes na quarentena `_v2` e grava métricas em `<catalog>.observability.dq_run_metrics`. O sufixo `_v2` separa o schema tipado pós-limpeza das quarentenas raw legadas, incompatíveis para `mergeSchema`.
+O Job DQX recebe uma `odate` explícita, filtra somente essa partição em cada tabela Bronze e falha se qualquer uma das cinco entidades não tiver linhas. Antes de aplicar regras, ele usa as mesmas transformações puras da Silver para deduplicar, tipar, normalizar e mascarar os dados. Essa limpeza também remove registros incompletos em campos não-chave antes do DQ; a reconciliação fica registrada como `removed_by_cleaning = input_rows - checked_rows` dentro de `violation_summary`. Só então o DQX divide linhas válidas e inválidas, mascara PII de pacientes na quarentena `<catalog>.quarantine.<stage>_<table>` e grava métricas em `<catalog>.observability.dq_run_metrics`. Cada estágio usa tabelas próprias para manter separados os contratos raw e tipado.
 
 | Entidade | Regras principais |
 | --- | --- |
@@ -307,17 +306,17 @@ Depois da limpeza, qualquer violação restante gera status `FAILED`, persiste a
 
 ### 3.8 Camada Silver
 
-[`transforms.py`](databricks/src/silver/transforms.py) trata cada `odate` como snapshot completo e lê apenas a data aprovada para `bronze_to_silver` em `dq_promotion_control`. O módulo compartilhado [`cleaning.py`](databricks/src/silver/cleaning.py) repete deterministicamente a mesma deduplicação, tipagem e normalização validadas pelo gate. Expectations `expect_or_fail` interrompem a materialização inteira se o contrato de qualquer view for violado.
+[`transforms.py`](databricks/src/silver/transforms.py) trata cada `odate` como snapshot completo e lê apenas a data aprovada para `bronze_to_silver` em `dq_promotion_control`. O módulo compartilhado [`cleaning.py`](databricks/src/silver/cleaning.py) repete deterministicamente a mesma deduplicação, tipagem e normalização validadas pelo gate. Cada saída é uma tabela Delta histórica e a escrita substitui somente a partição solicitada.
 
-| View Silver | Transformações relevantes |
+| Tabela Silver | Transformações relevantes |
 | --- | --- |
-| `patients_current` | Tipagem, trim/uppercase e máscaras de nome, CPF, e-mail e telefone |
-| `hospitals_current` | Capacidade inteira, UF uppercase e textos normalizados |
-| `doctors_current` | CRM/IDs bigint, textos normalizados |
-| `diseases_current` | Severidade inteira e textos normalizados |
-| `attendance_current` | Timestamp/data, custo `decimal(12,2)`, severidade inteira e flag booleana |
+| `silver.patients` | Tipagem, trim/uppercase e máscaras de nome, CPF, e-mail e telefone |
+| `silver.hospitals` | Capacidade inteira, UF uppercase e textos normalizados |
+| `silver.doctors` | CRM/IDs bigint, textos normalizados |
+| `silver.diseases` | Severidade inteira e textos normalizados |
+| `silver.attendance` | Timestamp/data, custo `decimal(12,2)`, severidade inteira e flag booleana |
 
-As views mantêm `snapshot_date`, `_source_file` e `_ingested_at` para rastreabilidade. O modelo tem semântica de current snapshot análoga a SCD Type 1, sem implementar uma dimensão SCD por `MERGE`; não mantém histórico dimensional Type 2.
+As tabelas mantêm `odate`, `_source_file` e `_ingested_at` para rastreabilidade. Como cada partição representa um snapshot completo, consultar uma data reproduz o estado daquela entidade no processamento correspondente, enquanto consultar todas as partições expõe o histórico acumulado.
 
 ### 3.9 **Mascaramento de Dados** e minimização
 
@@ -330,44 +329,45 @@ Os identificadores diretos recebem máscaras de apresentação ao entrar na Silv
 | `email` | Primeira letra + domínio | `m***@example.com` |
 | `phone` | Apenas quatro últimos dígitos | `***-1234` |
 
-A Gold exclui nome, CPF, e-mail e telefone da dimensão de pacientes. Ainda assim, isso é minimização e redação de identificadores, não prova de anonimização: `patient_id`, localização, nascimento, eventos assistenciais e combinações de atributos podem permitir reidentificação. A dimensão de médicos também mantém `doctor_name`. Portanto, a Gold não é livre de dados pessoais nem anônima; Raw e Bronze mantêm PII integral para finalidades técnicas controladas. Uma avaliação formal deve considerar base legal, finalidade, necessidade, retenção, risco de reidentificação, direitos do titular e controles organizacionais.
+A tabela `gold.patients` exclui nome, CPF, e-mail e telefone. Ainda assim, isso é minimização e redação de identificadores, não prova de anonimização: `patient_id`, localização, nascimento, eventos assistenciais e combinações de atributos podem permitir reidentificação. A tabela `gold.doctors` mantém `doctor_name`. Portanto, a Gold não é livre de dados pessoais nem anônima; Raw e Bronze mantêm PII integral para finalidades técnicas controladas. Uma avaliação formal deve considerar base legal, finalidade, necessidade, retenção, risco de reidentificação, direitos do titular e controles organizacionais.
 
 ### 3.10 Gate de qualidade Silver -> Gold
 
-O segundo gate filtra as views tipadas pela mesma `odate` recebida pelo Job e repete verificações essenciais:
+O segundo gate filtra as tabelas Silver pela mesma `odate` recebida pelo Job e repete verificações essenciais:
 
 - chaves presentes e únicas;
-- `snapshot_date` presente para pacientes;
+- `odate` presente para pacientes;
 - capacidade hospitalar válida;
 - vínculos obrigatórios presentes;
 - data de atendimento presente;
 - custo não negativo;
 - severidade dentro do domínio.
 
-Apenas quando as cinco views passam o controle de promoção de `silver_to_gold` é atualizado e o Job executa a Gold. A fact usa `expect_or_fail` para que uma data de atendimento ausente aborte a atualização inteira, em vez de salvar uma tabela parcialmente filtrada.
+Apenas quando as cinco tabelas passam, a combinação (`silver_to_gold`, `odate`) é registrada no controle de promoção e o Job executa a Gold. Uma data de atendimento ausente reprova o gate e impede a execução da camada seguinte.
 
 ### 3.11 Camada Gold
 
-[`marts.py`](databricks/src/gold/marts.py) publica um esquema estrela:
+[`marts.py`](databricks/src/gold/marts.py) publica as mesmas cinco entidades com contrato analítico minimizado e um KPI diário:
 
 ```mermaid
 flowchart TB
-    P[dim_patient] --> F[fact_attendance]
-    H[dim_hospital] --> F
-    D[dim_doctor] --> F
-    DI[dim_disease] --> F
-    F --> KPI[kpi_hospital_daily]
-    H --> KPI
+    SP[silver.patients] --> GP[gold.patients]
+    SH[silver.hospitals] --> GH[gold.hospitals]
+    SD[silver.doctors] --> GD[gold.doctors]
+    SDO[silver.diseases] --> GDO[gold.diseases]
+    SA[silver.attendance] --> GA[gold.attendance]
+    GA --> KPI[gold.kpi_hospital_daily]
+    GH --> KPI
 ```
 
 | Produto | Grão | Conteúdo |
 | --- | --- | --- |
-| `dim_patient` | Um paciente atual | Sexo, tipo sanguíneo, nascimento, cidade, UF e data do snapshot; sem nome, CPF, e-mail e telefone, mas ainda com `patient_id` e quasi-identificadores |
-| `dim_hospital` | Um hospital atual | Nome, tipo, localidade, capacidade e snapshot |
-| `dim_doctor` | Um médico atual | Nome, especialidade, hospital e snapshot |
-| `dim_disease` | Uma doença atual | Nome, categoria, severidade e snapshot |
-| `fact_attendance` | Um atendimento | Chaves dimensionais, data/hora, espera, custo, severidade, alta e snapshot |
-| `kpi_hospital_daily` | Um hospital por dia | Quantidade, espera média, custo total e taxa de alta, enriquecidos com o hospital |
+| `gold.patients` | Um paciente por `odate` | Sexo, tipo sanguíneo, nascimento, cidade, UF e `odate`; sem nome, CPF, e-mail e telefone, mas ainda com `patient_id` e quasi-identificadores |
+| `gold.hospitals` | Um hospital por `odate` | Nome, tipo, localidade, capacidade e `odate` |
+| `gold.doctors` | Um médico por `odate` | Nome, especialidade, hospital e `odate` |
+| `gold.diseases` | Uma doença por `odate` | Nome, categoria, severidade e `odate` |
+| `gold.attendance` | Um atendimento por `odate` | Chaves das entidades, data/hora, espera, custo, severidade, alta e `odate` |
+| `gold.kpi_hospital_daily` | Um hospital por dia e `odate` | Quantidade, espera média, custo total e taxa de alta, enriquecidos com o snapshot correspondente do hospital |
 
 Fórmulas do KPI:
 
@@ -419,10 +419,10 @@ Para uso real, também são necessários: bloqueio de acesso público, TLS obrig
 | --- | --- | --- |
 | Existência do arquivo | ADF `GetMetadata` | Falha cedo quando a partição S3 está incompleta |
 | Retries e status de cópia | ADF pipeline run | Diagnóstico de ingestão e conectividade |
-| `_source_file`, `_ingested_at`, `snapshot_date` | Bronze/Silver | Rastreabilidade de arquivo e tempo |
-| Expectation metrics | Lakeflow | Contagem de violações e falhas transacionais por `expect_or_fail` |
+| `_source_file`, `_ingested_at`, `odate` | Bronze/Silver | Rastreabilidade de arquivo, ingestão e partição lógica |
+| Métricas DQ streaming | Lakeflow | Contagem de violações e falhas transacionais por `expect_or_fail` no fluxo de sinais vitais |
 | `dq_run_metrics` | DQX | `odate`, `input_rows`, `checked_rows`, `removed_by_cleaning` em `violation_summary`, válidos, quarentena, status, tabela e run ID |
-| `dq_promotion_control` | DQX/Silver | Única `odate` aprovada por estágio, atualizada somente depois que as cinco tabelas passam |
+| `dq_promotion_control` | DQX/Silver | Histórico de `odate` aprovada por estágio, registrado somente depois que as cinco tabelas passam |
 | Event log `vital_streaming_pipeline_events` | Lakeflow | Estado do update, volume/status por flow, expectations e backlog observado durante a run |
 | Tabelas de sistema `system.lakeflow.*` | Databricks | Estado e duração de Jobs e Pipeline, incluindo falha/cancelamento |
 | E-mail + Logic App Consumption | Jobs Databricks e ADF produtivos | Webhooks de falha/duração e verificação mensal da ingestão S3 → ADLS no dia 05 |
@@ -454,8 +454,8 @@ Hubs, atraso S3/ADF ponta a ponta nem SLO formal.
 Mecanismos existentes:
 
 - ADF processa os cinco datasets em paralelo (`isSequential: false`, `batchCount: 5`).
-- Auto Loader descobre arquivos incrementalmente e mantém checkpoint gerenciado.
-- Lakeflow Pipelines usa compute serverless e execução acionada, evitando cluster permanente.
+- O batch lê e substitui somente a partição `odate` solicitada em tabelas Delta.
+- Lakeflow Jobs e a Pipeline streaming usam compute serverless acionado, evitando cluster permanente.
 - O produtor Event Hubs agrupa eventos por paciente até o limite do lote; o
   consumidor limita cada micro-batch a 10.000 offsets.
 - Os jobs batch usam fila; o streaming recusa sobreposição (`queue: false`),
@@ -647,7 +647,7 @@ data-generator/output/raw/odate=2026-07-05/
 `-- attendance.csv
 ```
 
-Para outra data, use um novo `odate`. Prefira um path/`odate` novo por execução. `--overwrite` avança o metadata, não reproduz a partição anterior e, após upload/cópia para o mesmo path, pode não atualizar a Bronze porque `cloudFiles.allowOverwrites` não está habilitado.
+Para outra data, use um novo `odate`. `--overwrite` avança o metadata e gera outro conteúdo, portanto não reproduz a partição anterior byte a byte. Depois do upload e da cópia, o Job pode ser executado novamente com a mesma data: o `replaceWhere` atualizará somente essa partição da Bronze até a Gold.
 
 Para testar a quarentena, gere `--profile chaos` com uma segunda `odate`; não reutilize o path limpo.
 
@@ -708,9 +708,9 @@ ORDER BY checked_at DESC;
 
 SELECT *
 FROM healthlake_dev.observability.dq_promotion_control
-ORDER BY dq_stage;
+ORDER BY dq_stage, odate DESC;
 
-SHOW TABLES IN healthlake_dev.quarantine LIKE '*_v2';
+SHOW TABLES IN healthlake_dev.quarantine LIKE 'bronze_to_silver_*';
 ```
 
 Em `dq_run_metrics`, `input_rows` é a quantidade filtrada da camada de origem para a `odate` e `checked_rows` é a quantidade efetivamente submetida às regras depois de limpeza e deduplicação. A diferença `removed_by_cleaning = input_rows - checked_rows`, registrada no JSON de `violation_summary`, contabiliza os registros incompletos em campos não-chave removidos antes do DQ. Depois dessa etapa, qualquer violação restante bloqueia o salvamento da tabela inteira; o controle de promoção só muda depois que as cinco entidades passam.
@@ -721,7 +721,7 @@ Quando os dois gates aprovarem, valide a Gold:
 
 ```sql
 SELECT COUNT(*) AS attendance_rows
-FROM healthlake_dev.gold.fact_attendance;
+FROM healthlake_dev.gold.attendance;
 
 SELECT *
 FROM healthlake_dev.gold.kpi_hospital_daily
@@ -775,8 +775,8 @@ preserva os offsets. A agenda do Job continua pausada após a execução manual.
 | `S3_RAW_FILE_NOT_FOUND` no ADF | Confirme todos os objetos e o layout exato no bucket |
 | Erro de Key Vault | Verifique nomes dos secrets e acesso da managed identity |
 | Bundle não autentica | Revise host/profile ou variables/secrets OAuth M2M |
-| Gate DQX falha | Confirme o `--params "odate=YYYY-MM-DD"`, consulte `dq_run_metrics` para essa data e a tabela de quarentena com sufixo `_v2` |
-| Silver vazia | Confirme que as cinco Bronze têm linhas na `odate` solicitada e que `dq_promotion_control` aprovou `bronze_to_silver`; linhas legadas com `odate` nula exigem nova partição imutável ou full refresh controlado |
+| Gate DQX falha | Confirme o `--params "odate=YYYY-MM-DD"`, consulte `dq_run_metrics` para essa data e a tabela `quarantine.<stage>_<table>` correspondente |
+| Silver vazia | Confirme que as cinco tabelas Bronze têm linhas na `odate` solicitada e que `dq_promotion_control` aprovou (`bronze_to_silver`, `odate`) |
 | Dashboard sem dados | Confirme a publicação com credencial do service principal, os IDs produtivos, o acesso dele às system tables e se existe uma run nos últimos 90 dias; abrir o painel inicia o Warehouse |
 | Backlog do painel parece antigo | É o backlog observado na última run; consulte Azure Monitor/Event Hubs para estado posterior ao momento exibido |
 | Testes do gerador falham | Execute `python -m pytest data-generator/tests -q` e revise o contrato dos perfis `clean`/`chaos` |
@@ -788,7 +788,7 @@ preserva os offsets. A agenda do Job continua pausada após a execução manual.
 ### 5.1 Próximos Passos
 
 - Evoluir a observabilidade dos pipelines, monitorando latência, throughput, tempo de execução, falhas, volume processado e consumo de recursos.
-- Criar mecanismos mais robustos de reprocessamento e recuperação de falhas, garantindo idempotência tanto no fluxo batch quanto no streaming.
+- Expandir a reconciliação automática entre as contagens de uma mesma `odate` nas três camadas e nos gates.
 - Realizar testes de performance e escalabilidade com volumes maiores de dados e diferentes níveis de paralelismo.
 - Otimizar as tabelas Delta com estratégias de particionamento, OPTIMIZE, clustering e gerenciamento adequado de arquivos.
 - Evoluir a segurança de dados com políticas mais detalhadas de acesso, Row-Level Security, Column-Level Security e mascaramento de PII.
@@ -799,7 +799,7 @@ Definir SLAs/SLOs de dados, como disponibilidade, freshness e tempo máximo de p
 
 ### 5.2 Considerações finais
 
-O projeto apresenta uma base coerente para um case de engenharia de dados: fontes sintéticas relacionais, integração multicloud, landing Raw, arquitetura Medallion, Spark/Delta, gates de qualidade, modelagem dimensional, governança por grupos, dashboard e deploy declarativo do Databricks.
+O projeto apresenta uma base coerente para um case de engenharia de dados: fontes sintéticas relacionais, integração multicloud, landing Raw, arquitetura Medallion, Spark/Delta, gates de qualidade, tabelas analíticas históricas, governança por grupos, dashboard e deploy declarativo do Databricks.
 
 Além de demonstrar os principais componentes tecnológicos, o case evidencia preocupações importantes de uma plataforma moderna de engenharia de dados, como qualidade, confiabilidade, rastreabilidade, segurança, escalabilidade e automação. Dessa forma, a solução não se limita à movimentação e transformação de dados, mas estabelece uma base arquitetural que pode ser progressivamente evoluída para atender requisitos de produção, novos domínios de dados e consumidores analíticos com maior escala e governança.
 
@@ -831,14 +831,11 @@ Fontes primárias e oficiais consultadas para fundamentar as escolhas. Acesso em
 ### 6.3 Lakehouse, qualidade e consumo
 
 - [Microsoft - Medallion Lakehouse Architecture no Azure Databricks](https://learn.microsoft.com/en-us/azure/databricks/lakehouse/medallion) - papéis de Bronze, Silver e Gold.
-- [Microsoft - Auto Loader](https://learn.microsoft.com/en-us/azure/databricks/ingestion/cloud-object-storage/auto-loader/) - ingestão incremental, checkpoint e formatos.
-- [Microsoft - Opções do Auto Loader](https://learn.microsoft.com/en-us/azure/databricks/ingestion/cloud-object-storage/auto-loader/options) - comportamento de `cloudFiles.allowOverwrites` e opções de arquivos.
 - [Microsoft - Lakeflow Pipelines](https://learn.microsoft.com/en-us/azure/databricks/ldp/concepts/) - conceitos do framework declarativo, Delta e expectations.
 - [Microsoft - Expectations em Lakeflow](https://learn.microsoft.com/en-us/azure/databricks/ldp/expectations) - ações de warn, drop e fail.
 - [Microsoft - Delta Lake no Azure Databricks](https://learn.microsoft.com/en-us/azure/databricks/delta/) - log transacional, ACID e schema enforcement.
 - [Databricks Labs - Applying DQX quality checks](https://databrickslabs.github.io/dqx/docs/guide/quality_checks_apply/) - split válido/inválido e quality checks.
 - [Databricks Labs - DQX README](https://github.com/databrickslabs/dqx/blob/main/README.md) - status Labs e ausência de SLA formal.
-- [Microsoft - Star schema](https://learn.microsoft.com/en-us/power-bi/guidance/star-schema) - dimensões, fatos e granularidade.
 
 ### 6.4 Governança, operação e CI/CD
 

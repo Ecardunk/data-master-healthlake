@@ -171,12 +171,12 @@ def rules_for(stage: str, table_name: str):
         }
     else:
         rules = {
-            "patients_current": [
+            "patients": [
                 not_null("patient_id_present", "patient_id"),
                 unique_key("patient_id", "patient_id"),
-                not_null("snapshot_date_present", "snapshot_date"),
+                not_null("odate_present", "odate"),
             ],
-            "hospitals_current": [
+            "hospitals": [
                 not_null("hospital_id_present", "hospital_id"),
                 unique_key("hospital_id", "hospital_id"),
                 sql_rule(
@@ -185,12 +185,12 @@ def rules_for(stage: str, table_name: str):
                     "capacity must be between 1 and 2000",
                 ),
             ],
-            "doctors_current": [
+            "doctors": [
                 not_null("doctor_id_present", "doctor_id"),
                 unique_key("doctor_id", "doctor_id"),
                 not_null("hospital_id_present", "hospital_id"),
             ],
-            "diseases_current": [
+            "diseases": [
                 not_null("disease_id_present", "disease_id"),
                 unique_key("disease_id", "disease_id"),
                 sql_rule(
@@ -199,7 +199,7 @@ def rules_for(stage: str, table_name: str):
                     "severity_level must be between 1 and 5",
                 ),
             ],
-            "attendance_current": [
+            "attendance": [
                 not_null("attendance_id_present", "attendance_id"),
                 unique_key("attendance_id", "attendance_id"),
                 not_null("attendance_date_present", "attendance_date"),
@@ -228,19 +228,11 @@ def source_schema(stage: str) -> str:
 
 
 def snapshot_column(stage: str) -> str:
-    return "odate" if stage == "bronze_to_silver" else "snapshot_date"
+    return "odate"
 
 
 def tables_for(stage: str):
-    if stage == "bronze_to_silver":
-        return ["patients", "hospitals", "doctors", "diseases", "attendance"]
-    return [
-        "patients_current",
-        "hospitals_current",
-        "doctors_current",
-        "diseases_current",
-        "attendance_current",
-    ]
+    return ["patients", "hospitals", "doctors", "diseases", "attendance"]
 
 
 def prepare_for_checks(dataframe, stage: str, table_name: str):
@@ -251,7 +243,7 @@ def prepare_for_checks(dataframe, stage: str, table_name: str):
 
 
 def mask_sensitive_columns(dataframe, table_name: str):
-    if table_name not in {"patients", "patients_current"}:
+    if table_name != "patients":
         return dataframe
 
     if "full_name" in dataframe.columns:
@@ -334,7 +326,7 @@ def ensure_promotion_control(catalog: str):
           dq_run_id STRING NOT NULL,
           approved_at TIMESTAMP NOT NULL
         ) USING DELTA
-        COMMENT 'Single approved snapshot per DQ stage; updated only after every table passes'
+        COMMENT 'Historical approved partitions per DQ stage; written only after every table passes'
         """
     )
 
@@ -375,6 +367,7 @@ def record_approval(catalog: str, stage: str, odate: date, run_id: str, at: date
         MERGE INTO {catalog}.observability.dq_promotion_control AS target
         USING _healthlake_dq_approval AS source
           ON target.dq_stage = source.dq_stage
+         AND target.odate = source.odate
         WHEN MATCHED THEN UPDATE SET
           target.odate = source.odate,
           target.dq_run_id = source.dq_run_id,
@@ -396,11 +389,9 @@ def main():
 
     for table_name in tables_for(args.stage):
         source_table = f"{args.catalog}.{source_schema(args.stage)}.{table_name}"
-        # The v2 tables intentionally separate post-cleaning, typed quarantine
-        # records from the legacy raw schemas, which Delta cannot safely merge.
-        quarantine_table = (
-            f"{args.catalog}.quarantine.{args.stage}_{table_name}_v2"
-        )
+        # Each stage has a dedicated typed quarantine table so raw and cleaned
+        # contracts never share a Delta schema.
+        quarantine_table = f"{args.catalog}.quarantine.{args.stage}_{table_name}"
         source_df = spark.read.table(source_table)
         if args.stage == "bronze_to_silver":
             source_df = with_effective_odate(source_df)

@@ -29,7 +29,7 @@ CLEANUP_DROP_NULLS = {
 
 
 def with_effective_odate(dataframe):
-    """Backfill legacy null odates from immutable source paths in memory."""
+    """Recover a missing odate from the immutable source path in memory."""
     path_odate = F.to_date(
         F.regexp_extract(F.col("_source_file"), ODATE_PATH_PATTERN, 1),
         "yyyy-MM-dd",
@@ -72,7 +72,7 @@ def deduplicate_snapshot(dataframe, key_column: str):
     return (
         dataframe.withColumn("_row_number", F.row_number().over(latest_record_window))
         .where(F.col("_row_number") == 1)
-        .drop("_row_number", "_rescued_data")
+        .drop("_row_number", "_rescued_data", "_corrupt_record")
     )
 
 
@@ -90,7 +90,7 @@ def clean_patients(dataframe):
         F.trim("city").alias("city"),
         F.upper(F.trim("state")).alias("state"),
         F.to_timestamp("created_at").alias("created_at"),
-        F.col("odate").alias("snapshot_date"),
+        F.col("odate"),
         F.col("_source_file"),
         F.col("_ingested_at"),
     )
@@ -105,7 +105,7 @@ def clean_hospitals(dataframe):
         F.trim("city").alias("city"),
         F.col("capacity").cast("int").alias("capacity"),
         F.to_timestamp("created_at").alias("created_at"),
-        F.col("odate").alias("snapshot_date"),
+        F.col("odate"),
         F.col("_source_file"),
         F.col("_ingested_at"),
     )
@@ -119,7 +119,7 @@ def clean_doctors(dataframe):
         F.trim("specialty").alias("specialty"),
         F.col("hospital_id").cast("bigint").alias("hospital_id"),
         F.to_timestamp("created_at").alias("created_at"),
-        F.col("odate").alias("snapshot_date"),
+        F.col("odate"),
         F.col("_source_file"),
         F.col("_ingested_at"),
     )
@@ -132,7 +132,7 @@ def clean_diseases(dataframe):
         F.trim("category").alias("category"),
         F.col("severity_level").cast("int").alias("severity_level"),
         F.to_timestamp("created_at").alias("created_at"),
-        F.col("odate").alias("snapshot_date"),
+        F.col("odate"),
         F.col("_source_file"),
         F.col("_ingested_at"),
     )
@@ -158,7 +158,7 @@ def clean_attendance(dataframe, include_quality_columns: bool = False):
         [
             (discharge_flag == 1).alias("is_discharged"),
             F.to_timestamp("created_at").alias("created_at"),
-            F.col("odate").alias("snapshot_date"),
+            F.col("odate"),
             F.col("_source_file"),
             F.col("_ingested_at"),
         ]
