@@ -73,7 +73,7 @@ def read_raw_csv(spark, raw_root: str, dataset_name: str, odate):
         .option("columnNameOfCorruptRecord", "_corrupt_record")
         .option("pathGlobFilter", "*.csv")
         .load(partition_path)
-        .withColumn("_source_file", F.input_file_name())
+        .withColumn("_source_file", F.col("_metadata.file_path"))
         .withColumn("_ingested_at", F.current_timestamp())
         .withColumn("odate", F.lit(odate).cast("date"))
     )

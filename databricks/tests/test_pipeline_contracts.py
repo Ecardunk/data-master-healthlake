@@ -55,6 +55,13 @@ def test_bronze_uses_stable_explicit_schemas_for_decimal_like_csv_values():
     assert "cost DECIMAL(12,2)" in schemas["attendance"]
 
 
+def test_bronze_uses_unity_catalog_compatible_file_metadata():
+    source = BRONZE_INGESTION.read_text(encoding="utf-8")
+
+    assert 'F.col("_metadata.file_path")' in source
+    assert "input_file_name" not in source
+
+
 def test_medallion_layers_do_not_silently_drop_failed_rows():
     pipeline_sources = [
         BRONZE_INGESTION,
