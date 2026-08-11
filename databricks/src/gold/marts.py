@@ -14,6 +14,7 @@ if str(SOURCE_ROOT) not in sys.path:
 
 from common.batch import (  # noqa: E402
     TABLE_NAMES,
+    log_status,
     parse_iso_date,
     replace_odate_partition,
     require_gate_approval,
@@ -134,15 +135,20 @@ def build_daily_kpi(spark, catalog: str, odate):
     )
 
 
-def main():
-    args = parse_args()
-    spark = SparkSession.builder.getOrCreate()
+def run_marts(args, spark):
     require_gate_approval(
         spark, args.catalog, "silver_to_gold", args.odate
     )
 
     for table_name in TABLE_NAMES:
         target_table = f"{args.catalog}.gold.{table_name}"
+        log_status(
+            "gold",
+            "table_started",
+            source_table=f"{args.catalog}.silver.{table_name}",
+            table=target_table,
+            odate=args.odate,
+        )
         partition = require_nonempty_partition(
             build_gold_partition(
                 spark, args.catalog, table_name, args.odate
@@ -151,8 +157,21 @@ def main():
             args.odate,
         )
         replace_odate_partition(spark, partition, target_table, args.odate)
+        log_status(
+            "gold",
+            "table_completed",
+            table=target_table,
+            odate=args.odate,
+        )
 
     kpi_table = f"{args.catalog}.gold.kpi_hospital_daily"
+    log_status(
+        "gold",
+        "table_started",
+        source_table=f"{args.catalog}.gold.attendance",
+        table=kpi_table,
+        odate=args.odate,
+    )
     kpi_partition = require_nonempty_partition(
         build_daily_kpi(spark, args.catalog, args.odate),
         kpi_table,
@@ -160,6 +179,42 @@ def main():
     )
     replace_odate_partition(
         spark, kpi_partition, kpi_table, args.odate
+    )
+    log_status(
+        "gold",
+        "table_completed",
+        table=kpi_table,
+        odate=args.odate,
+    )
+
+
+def main():
+    args = parse_args()
+    log_status(
+        "gold",
+        "task_started",
+        catalog=args.catalog,
+        odate=args.odate,
+        table_count=len(TABLE_NAMES) + 1,
+    )
+    try:
+        run_marts(args, SparkSession.builder.getOrCreate())
+    except Exception as error:
+        log_status(
+            "gold",
+            "task_failed",
+            catalog=args.catalog,
+            odate=args.odate,
+            error_type=type(error).__name__,
+            error=str(error),
+        )
+        raise
+    log_status(
+        "gold",
+        "task_completed",
+        catalog=args.catalog,
+        odate=args.odate,
+        processed_tables=len(TABLE_NAMES) + 1,
     )
 
 

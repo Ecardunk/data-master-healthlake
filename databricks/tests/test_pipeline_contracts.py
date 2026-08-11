@@ -6,6 +6,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BRONZE_INGESTION = REPO_ROOT / "databricks" / "src" / "bronze" / "ingestion.py"
 BATCH_HELPERS = REPO_ROOT / "databricks" / "src" / "common" / "batch.py"
+QUALITY_GATE = REPO_ROOT / "databricks" / "src" / "dq" / "quality_gate.py"
+SILVER_TRANSFORMS = REPO_ROOT / "databricks" / "src" / "silver" / "transforms.py"
+GOLD_MARTS = REPO_ROOT / "databricks" / "src" / "gold" / "marts.py"
 MEDALLION_JOB = REPO_ROOT / "databricks" / "resources" / "medallion.job.yml"
 PRODUCTION_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "deploy-prod.yml"
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
@@ -78,6 +81,33 @@ def test_medallion_layers_do_not_silently_drop_failed_rows():
 
     for source in pipeline_sources:
         assert "expect_or_drop" not in source.read_text(encoding="utf-8")
+
+
+def test_all_serverless_python_tasks_emit_flushable_structured_progress_logs():
+    helpers = BATCH_HELPERS.read_text(encoding="utf-8")
+    task_sources = [
+        BRONZE_INGESTION,
+        QUALITY_GATE,
+        SILVER_TRANSFORMS,
+        GOLD_MARTS,
+    ]
+
+    assert "json.dumps(payload" in helpers
+    assert 'f"[healthlake]' in helpers
+    assert "flush=True" in helpers
+    for task_source in task_sources:
+        source = task_source.read_text(encoding="utf-8")
+        assert "log_status(" in source
+        assert '"task_started"' in source
+        assert '"task_completed"' in source
+        assert '"task_failed"' in source
+        assert '"table_started"' in source
+
+    quality_gate = QUALITY_GATE.read_text(encoding="utf-8")
+    assert '"source_count_completed"' in quality_gate
+    assert '"checks_completed"' in quality_gate
+    assert '"metrics_write_completed"' in quality_gate
+    assert '"approval_write_completed"' in quality_gate
 
 
 def test_gate_requires_odate_and_applies_cleaning_before_checks():

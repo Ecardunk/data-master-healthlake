@@ -16,6 +16,7 @@ if str(SOURCE_ROOT) not in sys.path:
 
 from common.batch import (  # noqa: E402
     TABLE_NAMES,
+    log_status,
     parse_iso_date,
     replace_odate_partition,
     require_nonempty_partition,
@@ -79,18 +80,62 @@ def read_raw_csv(spark, raw_root: str, dataset_name: str, odate):
     )
 
 
-def main():
-    args = parse_args()
-    spark = SparkSession.builder.getOrCreate()
-
+def run_ingestion(args, spark):
     for table_name in TABLE_NAMES:
         target_table = f"{args.catalog}.bronze.{table_name}"
+        source_path = (
+            f"{args.raw_root.rstrip('/')}/{table_name}/"
+            f"odate={args.odate.isoformat()}"
+        )
+        log_status(
+            "bronze",
+            "table_started",
+            table=target_table,
+            source_path=source_path,
+            odate=args.odate,
+        )
         partition = require_nonempty_partition(
             read_raw_csv(spark, args.raw_root, table_name, args.odate),
             target_table,
             args.odate,
         )
         replace_odate_partition(spark, partition, target_table, args.odate)
+        log_status(
+            "bronze",
+            "table_completed",
+            table=target_table,
+            odate=args.odate,
+        )
+
+
+def main():
+    args = parse_args()
+    log_status(
+        "bronze",
+        "task_started",
+        catalog=args.catalog,
+        odate=args.odate,
+        table_count=len(TABLE_NAMES),
+    )
+    try:
+        run_ingestion(args, SparkSession.builder.getOrCreate())
+    except Exception as error:
+        log_status(
+            "bronze",
+            "task_failed",
+            catalog=args.catalog,
+            odate=args.odate,
+            error_type=type(error).__name__,
+            error=str(error),
+        )
+        raise
+    log_status(
+        "bronze",
+        "task_completed",
+        catalog=args.catalog,
+        odate=args.odate,
+        processed_tables=len(TABLE_NAMES),
+    )
 
 
 if __name__ == "__main__":
