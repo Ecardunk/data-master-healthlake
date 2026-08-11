@@ -83,9 +83,12 @@ Automation Bundles**, o nome atual do Databricks Asset Bundles (DAB).
   o compute. A agenda fica `PAUSED`; fila e retries estão desabilitados e a
   concorrência máxima é uma execução.
 - `HealthLake Observability - prod` (somente prod): dashboard AI/BI sob demanda
-  com estado real de Jobs/Pipeline, métricas por flow, DQ streaming, frescor,
-  latência, quarentena e gates batch por `odate`. Não há dashboard nem SQL
-  Warehouse de observabilidade em dev.
+  com três páginas. **Operação batch** mostra falhas/cancelamentos, Jobs em
+  execução, duração por Job, histórico recente, quarentena por `odate` e frescor
+  das seis tabelas Gold. **Operação streaming** acompanha updates, flows,
+  backlog observado e o Job triggered. **Qualidade e frescor** reúne DQ batch e
+  streaming, latência e quarentena. Não há dashboard nem SQL Warehouse de
+  observabilidade em dev.
 
 O catálogo e os schemas já são criados pela configuração de Unity Catalog:
 `healthlake_dev.bronze`, `healthlake_dev.silver` e `healthlake_dev.gold`.
@@ -250,12 +253,28 @@ O schedule permanece pausado depois dessas ações.
 O dashboard lê diretamente `system.lakeflow.pipeline_update_timeline`,
 `system.lakeflow.job_run_timeline`,
 `observability.vital_streaming_pipeline_events`, `dq_run_metrics`,
-`dq_promotion_control`, Silver e quarentena. Ele não materializa cópias, não
+`dq_promotion_control`, Silver, Gold e quarentena. O histórico de Jobs inclui o
+orquestrador Medallion e os gates DQX Bronze→Silver e Silver→Gold, permitindo
+identificar qual etapa falhou, foi cancelada ou aumentou de duração. A visão de
+frescor compara a última `odate`, quantidade de partições e volume histórico das
+seis tabelas Gold. Ele não materializa cópias, não
 contém payload, mensagem bruta nem `patient_id` e não possui schedule,
 subscription, SQL Alert ou Lakehouse Monitor. O Warehouse é serverless
 2X-Small, máximo de um cluster e auto-stop de 10 minutos. Abrir/atualizar o
 dashboard inicia esse Warehouse; o deploy de produção também o para
 explicitamente ao terminar.
+
+As três páginas têm responsabilidades distintas:
+
+| Página | Monitoramento |
+| --- | --- |
+| **Operação batch** | Estado e duração dos Jobs Medallion/DQX, falhas e cancelamentos em 90 dias, runs em andamento, quarentena por `odate` e frescor/volume histórico da Gold |
+| **Operação streaming** | Falhas e duração do Job e dos updates Lakeflow, saída por flow e backlog registrado no último refresh |
+| **Qualidade e frescor** | Idade do último evento, expectations, falhas DQ batch, quarentena por regra, latência p95 e reconciliação entre entrada, limpeza e registros avaliados |
+
+Os cartões retornam uma linha mesmo quando a contagem é zero. Um gráfico de
+quarentena sem linhas exibe `No data` e representa ausência de violações no
+período, desde que o cartão de falhas da página tenha carregado normalmente.
 
 O dashboard publicado usa a credencial do service principal de produção.
 `data-engineering-admin` e `data-engineering` recebem apenas `CAN_RUN`; os três
@@ -276,6 +295,27 @@ consultar, por identidade gerenciada read-only, a conclusão do ADF PROD no dia
 05. A consulta não inicia pipelines; quando não encontra a run esperada, envia
 e-mail. Nenhum webhook de teste é disparado no deploy e DEV não possui recursos
 de observabilidade ou alerta.
+
+| Job/evento | Limiar | Entrega |
+| --- | --- | --- |
+| `healthlake_medallion_refresh` com falha | Imediato | E-mail Databricks e webhook Logic App |
+| `healthlake_medallion_refresh` com duração excessiva | 7.200 segundos | E-mail Databricks e webhook Logic App |
+| `healthlake_vitals_streaming_refresh` com falha | Imediato | E-mail Databricks e webhook Logic App |
+| `healthlake_vitals_streaming_refresh` com duração excessiva | 900 segundos | E-mail Databricks e webhook Logic App |
+| ADF sem `Succeeded` para a `odate` do dia 05 | Verificação às 23:55, horário de São Paulo | E-mail Outlook pela Logic App |
+
+Runs puladas e canceladas não disparam notificações dos Jobs, mas continuam no
+histórico do dashboard. O e-mail de falha/duração é enviado diretamente pelo
+Databricks; em paralelo, a Logic App aceita somente o workspace produtivo e os
+dois tipos de evento configurados, normaliza Job/run/horário e não duplica esse
+e-mail. O e-mail enviado pela própria Logic App é o alerta independente de
+ausência da ingestão ADF.
+
+Na triagem, comece pela página que corresponde ao alerta. Para batch, confirme
+a `odate`, `dq_run_metrics`, `dq_promotion_control` e a quarentena antes de
+reexecutar. Para streaming, compare a run do Job com o update Lakeflow e seus
+flows. No alerta do ADF, verifique os cinco arquivos de origem e a run existente;
+a Logic App não executa autorremediação.
 
 Como a Pipeline é triggered e fica `IDLE`, o backlog exibido é o observado no
 último refresh e inclui o horário/idade da observação. Não representa eventos

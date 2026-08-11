@@ -34,6 +34,54 @@ jobs:
       - name: Validate development target
         working-directory: databricks
         run: databricks bundle validate --target dev
+      - name: Plan development target and restrict destructive changes
+        working-directory: databricks
+        shell: bash
+        run: |
+          set -euo pipefail
+          plan_file="$RUNNER_TEMP/healthlake-dev-plan.json"
+
+          databricks bundle plan \
+            --target dev \
+            --output json > "$plan_file"
+
+          echo "Development plan actions:"
+          jq -r '
+            (.plan // {})
+            | to_entries[]
+            | select(.value.action != "skip")
+            | "\(.value.action) \(.key)"
+          ' "$plan_file"
+
+          unexpected_destructive="$(
+            jq -r '
+              (.plan // {})
+              | to_entries[]
+              | select(
+                  .value.action == "delete" or
+                  .value.action == "recreate"
+                )
+              | select(
+                  .value.action != "delete" or
+                  (
+                    .key != "resources.pipelines.healthlake_bronze" and
+                    .key != "resources.pipelines.healthlake_silver" and
+                    .key != "resources.pipelines.healthlake_gold"
+                  )
+                )
+              | "\(.value.action) \(.key)"
+            ' "$plan_file"
+          )"
+
+          if [[ -n "$unexpected_destructive" ]]; then
+            echo "Unexpected destructive development plan blocked:" >&2
+            printf '%s\n' "$unexpected_destructive" >&2
+            exit 1
+          fi
       - name: Deploy development target
         working-directory: databricks
-        run: databricks bundle deploy --target dev
+        run: >-
+          databricks bundle deploy --target dev
+          --plan "$RUNNER_TEMP/healthlake-dev-plan.json"
+          --auto-approve
+          --fail-on-active-runs
