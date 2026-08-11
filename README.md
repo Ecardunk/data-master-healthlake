@@ -17,13 +17,13 @@ Plataforma de engenharia de dados desenvolvida com **Python, Amazon S3, Azure Da
 
 ### 1.1 Contexto
 
-O desafio solicita uma solução de engenharia de dados capaz de tratar volume, velocidade e variedade, cobrindo **Extração de Dados**, **Ingestão de Dados**, **Armazenamento de Dados**, **Observabilidade**, **Segurança de Dados**, **Mascaramento de Dados**, **Arquitetura de Dados**, **Escalabilidade** e **Reprodutibilidade da Arquitetura**.
+O desafio solicita uma solução de engenharia de dados cobrindo **Extração de Dados**, **Ingestão de Dados**, **Armazenamento de Dados**, **Observabilidade**, **Segurança de Dados**, **Mascaramento de Dados**, **Arquitetura de Dados**, **Escalabilidade** e **Reprodutibilidade da Arquitetura**.
 
-O tema escolhido é saúde. A plataforma simula hospitais, pacientes, médicos, doenças, atendimentos e sinais vitais, preserva os dados brutos em um data lake, aplica controles de qualidade e publica um modelo analítico com indicadores operacionais por hospital.
+O tema escolhido é saúde. A solução simula dados hospitalares em dois fluxos complementares: um fluxo batch, baseado em snapshots de pacientes, hospitais, médicos, doenças e atendimentos, e um fluxo streaming de sinais vitais. Os dados são ingeridos em uma arquitetura Lakehouse, processados nas camadas Bronze, Silver e Gold, submetidos a controles de qualidade, quarentena e regras de promoção entre camadas, e disponibilizados em modelos analíticos e agregações temporais para consumo operacional e analítico.
 
 ### 1.2 Objetivos técnicos
 
-- Gerar snapshots sintéticos em CSV, particionados por data lógica (`odate`), com seed, churn e anomalias controladas.
+- Gerar snapshots sintéticos em CSV, particionados por data lógica (`odate`), com seed, churn e anomalias controladas. Armazenar esses CSVs no Amazon S3.
 - Transportar o batch do Amazon S3 para o ADLS Gen2 por meio do Azure Data Factory (ADF).
 - Gerar eventos sintéticos em tempo quase real com um Producer em Python, simulando chegadas, alterações e anomalias de dados.
 - Publicar e distribuir os eventos por meio do Azure Event Hubs.
@@ -124,9 +124,6 @@ erDiagram
         decimal cost
     }
 ```
-
-As relações representam o desenho lógico; PKs e FKs não são declaradas nem impostas no storage atual. O perfil `clean` reconcilia referências básicas dos dados gerados, mas o gate DQ ainda não executa anti-joins entre todas as tabelas para impor integridade referencial sobre qualquer fonte externa; essa lacuna permanece nas limitações.
-
 ## 3. **Explicação sobre o Case Desenvolvido**
 
 ### 3.1 Estrutura do Repositório
@@ -300,7 +297,7 @@ src/
 
 #### `src/bronze/`
 
-Responsável pela ingestão incremental dos arquivos da camada Raw utilizando Auto Loader e Spark Declarative Pipelines.
+Responsável pela ingestão incremental dos arquivos da camada Raw.
 
 #### `src/silver/`
 
@@ -449,7 +446,7 @@ Configuração versionada de novos registros por execução:
 | Doenças | 0 |
 | Atendimentos | 2.500 |
 
-A CLI aceita `--profile clean|chaos`. Use `clean` para uma execução destinada à Gold e uma `odate` separada com `chaos` para demonstrar o bloqueio. A seed configura os geradores pseudoaleatórios (PRNGs) de `random`, NumPy e Faker. Isso melhora a repetibilidade, mas não garante sozinho uma reprodução byte a byte: o resultado também depende da versão das bibliotecas, do relógio usado por `end_date="now"`, do estado de IDs e dos snapshots anteriores. A própria documentação do Faker restringe a garantia à mesma versão. A opção `--overwrite` substitui os arquivos da partição, mas também gera novos dados e avança novamente os IDs; ela não funciona como replay byte a byte. Depois que os arquivos forem recopiados para a Raw, reexecutar o Job com a mesma `odate` substituirá somente essa partição nas três camadas.
+A CLI aceita `--profile clean|chaos`. A seed configura os geradores pseudoaleatórios (PRNGs) de `random`, NumPy e Faker. Isso melhora a repetibilidade, mas não garante sozinho uma reprodução byte a byte: o resultado também depende da versão das bibliotecas, do relógio usado por `end_date="now"`, do estado de IDs e dos snapshots anteriores. A própria documentação do Faker restringe a garantia à mesma versão. A opção `--overwrite` substitui os arquivos da partição, mas também gera novos dados e avança novamente os IDs; ela não funciona como replay byte a byte. Depois que os arquivos forem recopiados para a Raw, reexecutar o Job com a mesma `odate` substituirá somente essa partição nas três camadas.
 
 No modo de eventos, o gerador cria um contrato v1 por linha com UUID imutável,
 timestamps UTC e unidades explícitas, gravando um JSONL novo por
@@ -489,14 +486,6 @@ Para cada dataset, o ADF:
 - tenta novamente a cópia duas vezes, com intervalo de 60 segundos.
 
 As chaves do S3 são referenciadas pelos secrets `aws-s3-access-key-id` e `aws-s3-secret-access-key` no Azure Key Vault. O repositório não armazena seus valores.
-
-O pipeline mantém a anotação histórica `manual`, mas o repositório contém o
-artefato `adf/trigger/trigger_case.json`, que declara uma cópia mensal no dia 05
-e deriva a `odate` do horário agendado no fuso de São Paulo. Os workflows atuais
-não publicam `adf/**` e a factory de desenvolvimento auditada não possui trigger
-implantado. Além disso, o artefato local ainda não inicia o Job Databricks;
-portanto, a passagem ADF -> Databricks continua exigindo uma ação separada do
-operador.
 
 ### 3.5 **Ingestão de Dados** streaming
 
@@ -573,7 +562,7 @@ O Job DQX recebe uma `odate` explícita, filtra somente essa partição em cada 
 | Doenças | ID presente/único, severidade entre 1 e 5 |
 | Atendimentos | ID e FKs presentes, data não futura, espera 0-300, custo não negativo, severidade 1-5, alta 0/1 |
 
-Depois da limpeza, qualquer violação restante gera status `FAILED`, persiste a quarentena e lança erro para impedir a Silver; nenhuma fração válida da tabela é promovida. O split válido nunca é salvo diretamente. Somente quando as cinco tabelas passam o Job atualiza `<catalog>.observability.dq_promotion_control`; esse é o único sinal consumido pela Silver. Assim, as cinco tabelas são promovidas juntas ou nenhuma é atualizada. O perfil `clean` sustenta o caminho de sucesso, enquanto `chaos` demonstra deliberadamente quarentena e bloqueio.
+Depois da limpeza, qualquer violação restante gera status `FAILED`, persiste a quarentena e lança erro para impedir a Silver; nenhuma fração válida da tabela é promovida. O split válido nunca é salvo diretamente. Somente quando as cinco tabelas passam o Job atualiza `<catalog>.observability.dq_promotion_control`; esse é o único sinal consumido pela Silver. Assim, as cinco tabelas são promovidas juntas ou nenhuma é atualizada. 
 
 ### 3.9 Camada Silver
 
@@ -599,8 +588,6 @@ Os identificadores diretos recebem máscaras de apresentação ao entrar na Silv
 | `cpf` | Apenas dois últimos dígitos visíveis | `***.***.***-42` |
 | `email` | Primeira letra + domínio | `m***@example.com` |
 | `phone` | Apenas quatro últimos dígitos | `***-1234` |
-
-A tabela `gold.patients` exclui nome, CPF, e-mail e telefone. Ainda assim, isso é minimização e redação de identificadores, não prova de anonimização: `patient_id`, localização, nascimento, eventos assistenciais e combinações de atributos podem permitir reidentificação. A tabela `gold.doctors` mantém `doctor_name`. Portanto, a Gold não é livre de dados pessoais nem anônima; Raw e Bronze mantêm PII integral para finalidades técnicas controladas. Uma avaliação formal deve considerar base legal, finalidade, necessidade, retenção, risco de reidentificação, direitos do titular e controles organizacionais.
 
 ### 3.11 Gate de qualidade Silver -> Gold
 
@@ -681,8 +668,6 @@ Escrita, execução de pipelines e deploy devem pertencer a identidades de
 serviço dedicadas. O SQL acima não cria grupos, não gerencia seus membros, não
 concede permissões de workspace/warehouse e não é executado automaticamente
 pelo Bundle; esses itens são pré-requisitos administrativos separados.
-
-Para uso real, também são necessários: bloqueio de acesso público, TLS obrigatório, criptografia em repouso validada, private endpoints/VNet, rotação de credenciais, logs de auditoria, política de retenção/expurgo, segregação de funções, resposta a incidentes e avaliação de impacto. O uso de serviços que criptografam por padrão não substitui a verificação da configuração efetiva.
 
 ### 3.14 **Observabilidade**
 
@@ -798,8 +783,6 @@ Estratégias para crescimento:
 | Spark/Lakeflow | Particionamento de arquivos, mais tarefas e serverless autoscaling | Workers maiores quando o gargalo for memória/CPU por tarefa |
 | Event Hubs | Mais partições e consumidores independentes | Mais throughput/processing units e auto-inflate |
 | SQL | Mais clusters concorrentes | Warehouse maior |
-
-O case ainda não comprova capacidade de grande volume por teste de carga. O DQX agora filtra a partição-alvo antes da limpeza e das janelas de unicidade, evitando calcular sobre toda a Bronze histórica. Ainda é necessário medir e reduzir ações Spark repetidas dentro dessa partição, compactar arquivos pequenos e definir metas mensuráveis de volume, latência, custo e disponibilidade.
 
 ### 3.16 CI/CD e ambientes
 
