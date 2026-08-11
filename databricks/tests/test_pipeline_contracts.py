@@ -125,6 +125,8 @@ def test_all_batch_layers_process_and_replace_only_the_requested_odate():
     assert '.option("replaceWhere", f"odate = DATE' in helpers
     assert '.partitionBy("odate")' in helpers
     assert 'mode("errorifexists")' not in helpers
+    assert '.option("overwriteSchema", "true")' in helpers
+    assert "the table contains historical odate partitions" in helpers
     assert 'odate={odate.isoformat()}' in bronze
     assert '.where(F.col("odate") == F.lit(odate))' in silver
     assert '.where(F.col("odate") == F.lit(odate))' in gold

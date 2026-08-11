@@ -58,6 +58,32 @@ def replace_odate_partition(spark, dataframe, table_name: str, odate: date):
             f"found {partition_columns}"
         )
 
+    existing_schema = spark.read.table(table_name).schema.simpleString()
+    incoming_schema = dataframe.schema.simpleString()
+    if existing_schema != incoming_schema:
+        other_partition = (
+            spark.read.table(table_name)
+            .where(
+                F.col("odate").isNull()
+                | (F.col("odate") != F.lit(odate))
+            )
+            .limit(1)
+            .count()
+        )
+        if other_partition:
+            raise RuntimeError(
+                f"Refusing schema replacement for {table_name}: "
+                "the table contains historical odate partitions"
+            )
+        (
+            dataframe.write.format("delta")
+            .mode("overwrite")
+            .option("overwriteSchema", "true")
+            .partitionBy("odate")
+            .saveAsTable(table_name)
+        )
+        return
+
     (
         dataframe.write.format("delta")
         .mode("overwrite")
