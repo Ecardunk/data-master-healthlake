@@ -43,7 +43,7 @@ def replace_odate_partition(spark, dataframe, table_name: str, odate: date):
     if not spark.catalog.tableExists(table_name):
         (
             dataframe.write.format("delta")
-            .mode("errorifexists")
+            .mode("overwrite")
             .partitionBy("odate")
             .saveAsTable(table_name)
         )
