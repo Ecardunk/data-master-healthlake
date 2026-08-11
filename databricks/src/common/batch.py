@@ -127,6 +127,20 @@ def log_status(component: str, event: str, **fields):
     print_log_line(line)
 
 
+def log_status(component: str, event: str, **fields):
+    """Emit one immediately visible, PII-free event to the Databricks task output."""
+    payload = {
+        "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "component": component,
+        "event": event,
+        **fields,
+    }
+    print(
+        f"[healthlake] {json.dumps(payload, default=str, sort_keys=True)}",
+        flush=True,
+    )
+
+
 def parse_iso_date(value: str) -> date:
     """Parse the required business partition without falling back to the clock."""
     try:
