@@ -83,7 +83,6 @@ FIELD_LABELS = {
     "metric_count": "métricas",
     "failed_table_count": "tabelas reprovadas",
     "error_type": "tipo do erro",
-    "error": "erro",
     "reason": "motivo",
     "expected_partition_columns": "particionamento esperado",
     "actual_partition_columns": "particionamento encontrado",

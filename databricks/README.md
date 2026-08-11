@@ -126,9 +126,10 @@ como `🚀 [BRONZE] Execução iniciada`, `🧪 [DQX] Regras de qualidade avalia
 `✅ [DELTA] Partição Delta substituída` tornam o andamento fácil de acompanhar.
 Os detalhes mostram `odate`, tabela, estratégia de escrita e, nos gates DQX,
 contagens de entrada, registros verificados, válidos e enviados à quarentena.
-Erros permanecem em uma única linha e são limitados a 500 caracteres. Os logs
-contêm somente metadados operacionais e nunca imprimem registros nem
-identificadores de pacientes.
+Essas linhas são texto simples, sem JSON. Em caso de falha, a linha visual mostra
+somente o tipo do erro; o traceback original permanece disponível no Output para
+diagnóstico. Os detalhes são limitados a 500 caracteres e contêm somente
+metadados operacionais, nunca registros nem identificadores de pacientes.
 
 ## Semântica fail-closed dos gates
 

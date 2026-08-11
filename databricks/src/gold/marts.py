@@ -209,7 +209,6 @@ def main():
             catalog=args.catalog,
             odate=args.odate,
             error_type=type(error).__name__,
-            error=str(error),
         )
         raise
     log_status(
